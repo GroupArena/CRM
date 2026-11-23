@@ -268,7 +268,12 @@ export function computeInvoiceTotals<T extends LineInput>(
   total: number;
 } {
   const base = computeDocumentTotals(lines);
-  const invoiceType: InvoiceType = options.invoiceType === 'deposit' ? 'deposit' : 'standard';
+  const invoiceType: InvoiceType =
+    options.invoiceType === 'deposit'
+      ? 'deposit'
+      : options.invoiceType === 'balance'
+      ? 'balance'
+      : 'standard';
 
   if (invoiceType === 'deposit') {
     const rawPct = Number(options.depositPercentage);
@@ -289,6 +294,26 @@ export function computeInvoiceTotals<T extends LineInput>(
   const rawDeducted = Math.max(0, Number(options.deductedDepositAmount) || 0);
   const deductedDepositAmount = Math.min(base.subtotal, roundCurrency(rawDeducted));
   const total = roundCurrency(Math.max(0, base.subtotal - deductedDepositAmount));
+
+  if (invoiceType === 'balance') {
+    const rawPct = Number(options.depositPercentage);
+    const derivedPct =
+      base.subtotal > 0 && deductedDepositAmount > 0
+        ? Math.min(100, roundCurrency((deductedDepositAmount / base.subtotal) * 100))
+        : 100;
+    const depositPercentage =
+      Number.isFinite(rawPct) && rawPct > 0 ? Math.min(100, roundCurrency(rawPct)) : derivedPct || 100;
+
+    return {
+      lines: base.lines,
+      subtotal: base.subtotal,
+      vatAmount: 0,
+      invoiceType: 'balance',
+      depositPercentage,
+      deductedDepositAmount,
+      total,
+    };
+  }
 
   return {
     lines: base.lines,
@@ -324,6 +349,119 @@ export function getPaidDepositInvoicesForClient(
       return Boolean(contactId && inv.contactId === contactId);
     })
     .sort((a, b) => (b.issueDate || b.createdAt).localeCompare(a.issueDate || a.createdAt));
+}
+
+export function getDepositInvoicesForEntity(
+  invoices: Invoice[],
+  params: {
+    entityId?: string;
+    excludeInvoiceId?: string;
+  }
+): Invoice[] {
+  const { entityId, excludeInvoiceId } = params;
+  if (!entityId) return [];
+  return invoices
+    .filter((inv) => {
+      if (excludeInvoiceId && inv.id === excludeInvoiceId) return false;
+      if (inv.entityId !== entityId) return false;
+      if (inv.invoiceType !== 'deposit') return false;
+      if (inv.status === 'Annulée' || inv.status === 'Brouillon') return false;
+      return true;
+    })
+    .sort((a, b) => (b.issueDate || b.createdAt).localeCompare(a.issueDate || a.createdAt));
+}
+
+export function buildBalanceLinesFromDepositItems(
+  invoiceItems: Array<{
+    productId?: string;
+    invoiceId: string;
+    label: string;
+    description?: string;
+    quantity: number;
+    unitPrice: number;
+    orderIndex: number;
+  }>,
+  depositInvoiceId: string
+): LineInput[] {
+  if (!depositInvoiceId) return [];
+  return invoiceItems
+    .filter((item) => item.invoiceId === depositInvoiceId)
+    .sort((a, b) => a.orderIndex - b.orderIndex)
+    .map((item, idx) => ({
+      id: `il-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 5)}`,
+      productId: item.productId,
+      label: item.label,
+      description: item.description ?? '',
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      vatRate: 0,
+      orderIndex: idx,
+    }));
+}
+
+export function getDocumentAmountInWordsPrefix(kind: 'quote' | 'invoice'): string {
+  return kind === 'quote'
+    ? 'Arrêté le présent devis à la somme de '
+    : 'Arrêtée la présente facture à la somme de ';
+}
+
+export function shouldRenderStampAndSignature(kind: 'quote' | 'invoice'): boolean {
+  return kind === 'invoice';
+}
+
+export function getInvoiceTotalsDisplaySpec(params: {
+  kind: 'quote' | 'invoice';
+  invoiceType?: InvoiceType;
+  subtotal: number;
+  depositPercentage?: number;
+  deductedDepositAmount?: number;
+}): {
+  docTitle: string;
+  isDeposit: boolean;
+  isBalance: boolean;
+  resolvedDepositPct: number;
+  netLabel: string;
+  depositRowLabel: string | null;
+} {
+  const { kind, invoiceType, subtotal, depositPercentage, deductedDepositAmount } = params;
+  const isDeposit = kind === 'invoice' && invoiceType === 'deposit';
+  const isBalance =
+    kind === 'invoice' &&
+    (invoiceType === 'balance' ||
+      (!isDeposit && Boolean(deductedDepositAmount && deductedDepositAmount > 0)));
+
+  const resolvedDepositPct =
+    depositPercentage && depositPercentage > 0 && depositPercentage < 100
+      ? depositPercentage
+      : subtotal > 0 && deductedDepositAmount && deductedDepositAmount > 0
+      ? Math.round((deductedDepositAmount / subtotal) * 100)
+      : depositPercentage ?? 100;
+
+  const docTitle =
+    kind === 'quote'
+      ? 'DEVIS'
+      : isDeposit
+      ? "FACTURE D'ACOMPTE"
+      : isBalance
+      ? 'FACTURE DE SOLDE'
+      : 'FACTURE';
+
+  const depositRowLabel = isDeposit
+    ? `ACOMPTE FACTURÉ (${depositPercentage ?? 100}%)`
+    : isBalance
+    ? `ACOMPTE PAYÉ (${resolvedDepositPct}%)`
+    : null;
+
+  const netLabel = isDeposit || isBalance ? 'NET À PAYER' : 'TOTAL';
+
+  return {
+    docTitle,
+    isDeposit,
+    isBalance,
+    resolvedDepositPct,
+    netLabel,
+    depositRowLabel,
+  };
 }
 
 // --- Conversion Euro (Cours d'achat banque) & Validation Factures Commercial -> Super Admin ---

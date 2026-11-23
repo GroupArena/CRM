@@ -1954,7 +1954,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     });
     const invoiceId = `inv-${Date.now()}`;
     const hasDeductedDeposit =
-      totals.invoiceType === 'standard' &&
+      (totals.invoiceType === 'balance' || totals.invoiceType === 'standard') &&
       Boolean(payload.deductedDepositInvoiceId) &&
       totals.deductedDepositAmount > 0;
 
@@ -1970,7 +1970,10 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       quoteId: payload.quoteId,
       invoiceNumber: number,
       invoiceType: totals.invoiceType,
-      depositPercentage: totals.invoiceType === 'deposit' ? totals.depositPercentage : 100,
+      depositPercentage:
+        totals.invoiceType === 'deposit' || totals.invoiceType === 'balance'
+          ? totals.depositPercentage
+          : 100,
       deductedDepositInvoiceId: hasDeductedDeposit ? payload.deductedDepositInvoiceId : undefined,
       deductedDepositAmount: hasDeductedDeposit ? totals.deductedDepositAmount : undefined,
       status: needsValidation ? 'Brouillon' : payload.status ?? 'Émise',
@@ -2031,8 +2034,8 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     const typeSummary =
       totals.invoiceType === 'deposit'
         ? `Acompte ${totals.depositPercentage}%`
-        : hasDeductedDeposit
-        ? `Solde après déduction acompte`
+        : totals.invoiceType === 'balance' || hasDeductedDeposit
+        ? `Solde après déduction acompte (${totals.depositPercentage}%)`
         : 'Standard';
     await recordLog(
       invoice.entityId,
@@ -2081,7 +2084,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       deductedDepositAmount: invoice.deductedDepositAmount,
     });
     const hasDeductedDeposit =
-      totals.invoiceType === 'standard' &&
+      (totals.invoiceType === 'balance' || totals.invoiceType === 'standard') &&
       Boolean(invoice.deductedDepositInvoiceId) &&
       totals.deductedDepositAmount > 0;
     const invPayments = payments.filter((p) => p.invoiceId === invoice.id);
@@ -2094,7 +2097,10 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     const baseUpdated: Invoice = {
       ...invoice,
       invoiceType: totals.invoiceType,
-      depositPercentage: totals.invoiceType === 'deposit' ? totals.depositPercentage : 100,
+      depositPercentage:
+        totals.invoiceType === 'deposit' || totals.invoiceType === 'balance'
+          ? totals.depositPercentage
+          : 100,
       deductedDepositInvoiceId: hasDeductedDeposit ? invoice.deductedDepositInvoiceId : undefined,
       deductedDepositAmount: hasDeductedDeposit ? totals.deductedDepositAmount : undefined,
       status: isSalesEditor ? 'Brouillon' : invoice.status,

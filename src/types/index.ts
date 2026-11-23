@@ -512,7 +512,7 @@ export const INVOICE_STATUSES: InvoiceStatus[] = [
   'Annulée',
 ];
 
-export type InvoiceType = 'standard' | 'deposit';
+export type InvoiceType = 'standard' | 'deposit' | 'balance';
 
 export type InvoiceApprovalStatus = 'pending_approval' | 'approved' | 'rejected';
 

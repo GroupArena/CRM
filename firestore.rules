@@ -29,7 +29,10 @@ service cloud.firestore {
     }
 
     function isBootstrappedSuperAdmin() {
-      return isVerified() && request.auth.token.email == 'navalona.rajaonarivelo@gmail.com';
+      return isVerified() && request.auth.token.email in [
+        'navalona.rajaonarivelo@gmail.com',
+        'navalona@arenabusinesscenter.com'
+      ];
     }
 
     function userDocExists() {
@@ -449,7 +452,7 @@ service cloud.firestore {
         && (!('companyId' in data) || isValidString(data.companyId, 0, 128))
         && (!('quoteId' in data) || isValidString(data.quoteId, 0, 128))
         && isValidString(data.invoiceNumber, 3, 60)
-        && (!('invoiceType' in data) || data.invoiceType in ['standard', 'deposit'])
+        && (!('invoiceType' in data) || data.invoiceType in ['standard', 'deposit', 'balance'])
         && (!('depositPercentage' in data) || (data.depositPercentage is number && data.depositPercentage > 0 && data.depositPercentage <= 100))
         && (!('deductedDepositInvoiceId' in data) || isValidString(data.deductedDepositInvoiceId, 0, 128))
         && (!('deductedDepositAmount' in data) || (data.deductedDepositAmount is number && data.deductedDepositAmount >= 0))

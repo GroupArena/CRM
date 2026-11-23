@@ -13,9 +13,10 @@ import {
 } from '../../types';
 import {
   addDaysToDateIso,
+  buildBalanceLinesFromDepositItems,
   computeEuroConversion,
   computeInvoiceTotals,
-  getPaidDepositInvoicesForClient,
+  getDepositInvoicesForEntity,
   requiresSuperAdminValidation,
   resolveProductUnitPrice,
   type LineInput,
@@ -92,44 +93,58 @@ export function InvoiceFormModal({
     [products, entityId]
   );
 
-  const paidDepositOptions = useMemo(
+  const entityDepositOptions = useMemo(
     () =>
-      getPaidDepositInvoicesForClient(invoices, {
-        companyId: companyId || undefined,
-        contactId: contactId || undefined,
+      getDepositInvoicesForEntity(invoices, {
+        entityId,
         excludeInvoiceId: initialInvoice?.id,
       }),
-    [invoices, companyId, contactId, initialInvoice?.id]
+    [invoices, entityId, initialInvoice?.id]
   );
 
   const selectedDepositInvoice = useMemo(
-    () => paidDepositOptions.find((inv) => inv.id === deductedDepositInvoiceId) ?? null,
-    [paidDepositOptions, deductedDepositInvoiceId]
+    () => entityDepositOptions.find((inv) => inv.id === deductedDepositInvoiceId) ?? null,
+    [entityDepositOptions, deductedDepositInvoiceId]
   );
 
   useEffect(() => {
     if (
       deductedDepositInvoiceId &&
-      !paidDepositOptions.some((inv) => inv.id === deductedDepositInvoiceId)
+      !entityDepositOptions.some((inv) => inv.id === deductedDepositInvoiceId)
     ) {
       setDeductedDepositInvoiceId('');
     }
-  }, [deductedDepositInvoiceId, paidDepositOptions]);
+  }, [deductedDepositInvoiceId, entityDepositOptions]);
 
   useEffect(() => {
     if (!open) return;
     setErrorMsg(null);
     setActiveTab('form');
     if (initialInvoice) {
+      const initialType: InvoiceType =
+        initialInvoice.invoiceType === 'deposit'
+          ? 'deposit'
+          : initialInvoice.invoiceType === 'balance' ||
+            (Boolean(initialInvoice.deductedDepositInvoiceId) &&
+              Boolean(initialInvoice.deductedDepositAmount && initialInvoice.deductedDepositAmount > 0))
+          ? 'balance'
+          : 'standard';
       setEntityId(initialInvoice.entityId);
       setContactId(initialInvoice.contactId);
       setCompanyId(initialInvoice.companyId);
-      setInvoiceType(initialInvoice.invoiceType === 'deposit' ? 'deposit' : 'standard');
-      setDepositPercentage(
-        initialInvoice.invoiceType === 'deposit' && initialInvoice.depositPercentage
-          ? initialInvoice.depositPercentage
-          : 30
-      );
+      setInvoiceType(initialType);
+      if (initialType === 'deposit' && initialInvoice.depositPercentage) {
+        setDepositPercentage(initialInvoice.depositPercentage);
+      } else if (initialType === 'balance') {
+        const linkedDep = invoices.find((i) => i.id === initialInvoice.deductedDepositInvoiceId);
+        setDepositPercentage(
+          initialInvoice.depositPercentage && initialInvoice.depositPercentage < 100
+            ? initialInvoice.depositPercentage
+            : linkedDep?.depositPercentage ?? 30
+        );
+      } else {
+        setDepositPercentage(30);
+      }
       setDeductedDepositInvoiceId(initialInvoice.deductedDepositInvoiceId ?? '');
       setStatus(initialInvoice.status);
       setIssueDate(initialInvoice.issueDate);
@@ -192,18 +207,27 @@ export function InvoiceFormModal({
   ]);
 
   const rawDeductedDepositAmount =
-    invoiceType === 'standard' && selectedDepositInvoice
-      ? selectedDepositInvoice.paidAmount || selectedDepositInvoice.total
+    invoiceType === 'balance' && selectedDepositInvoice
+      ? selectedDepositInvoice.paidAmount > 0
+        ? selectedDepositInvoice.paidAmount
+        : selectedDepositInvoice.total
+      : invoiceType === 'balance' && initialInvoice?.deductedDepositAmount
+      ? initialInvoice.deductedDepositAmount
       : 0;
+
+  const effectiveDepositPct =
+    invoiceType === 'balance' && selectedDepositInvoice?.depositPercentage
+      ? selectedDepositInvoice.depositPercentage
+      : depositPercentage;
 
   const totals = useMemo(
     () =>
       computeInvoiceTotals(lines, {
         invoiceType,
-        depositPercentage,
+        depositPercentage: effectiveDepositPct,
         deductedDepositAmount: rawDeductedDepositAmount,
       }),
-    [lines, invoiceType, depositPercentage, rawDeductedDepositAmount]
+    [lines, invoiceType, effectiveDepositPct, rawDeductedDepositAmount]
   );
 
   const euroPreview = useMemo(() => {
@@ -261,6 +285,31 @@ export function InvoiceFormModal({
     setLines((prev) => prev.filter((_, idx) => idx !== index));
   };
 
+  const handleSelectDepositInvoice = (depId: string) => {
+    setDeductedDepositInvoiceId(depId);
+    const dep = entityDepositOptions.find((inv) => inv.id === depId);
+    if (!dep) return;
+
+    setContactId(dep.contactId);
+    setCompanyId(dep.companyId || '');
+    if (dep.currency) {
+      setCurrency(dep.currency);
+    }
+    if (dep.depositPercentage && dep.depositPercentage > 0) {
+      setDepositPercentage(dep.depositPercentage);
+    }
+    if (dep.showEuroConversion && dep.euroExchangeRate) {
+      setShowEuroConversion(true);
+      setEuroExchangeRate(String(dep.euroExchangeRate));
+      if (dep.euroBankName) setEuroBankName(dep.euroBankName);
+      if (dep.euroRateDate) setEuroRateDate(dep.euroRateDate);
+    }
+    const clonedLines = buildBalanceLinesFromDepositItems(invoiceItems, dep.id);
+    if (clonedLines.length > 0) {
+      setLines(clonedLines);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!entityId || !contactId || lines.length === 0) {
@@ -276,6 +325,11 @@ export function InvoiceFormModal({
       setActiveTab('form');
       return;
     }
+    if (invoiceType === 'balance' && !deductedDepositInvoiceId) {
+      setErrorMsg("Veuillez sélectionner une facture d'acompte émise par cette entité.");
+      setActiveTab('form');
+      return;
+    }
     const parsedEuroRate = Number(euroExchangeRate);
     if (showEuroConversion && (!Number.isFinite(parsedEuroRate) || parsedEuroRate <= 0)) {
       setErrorMsg("Veuillez saisir un cours d'achat Euro valide (strictement positif).");
@@ -286,9 +340,11 @@ export function InvoiceFormModal({
     setErrorMsg(null);
     try {
       const cleanDeductedId =
-        invoiceType === 'standard' && deductedDepositInvoiceId ? deductedDepositInvoiceId : undefined;
+        invoiceType === 'balance' && deductedDepositInvoiceId ? deductedDepositInvoiceId : undefined;
       const cleanDeductedAmount =
         cleanDeductedId && totals.deductedDepositAmount > 0 ? totals.deductedDepositAmount : undefined;
+      const persistedDepositPct =
+        invoiceType === 'deposit' || invoiceType === 'balance' ? totals.depositPercentage : 100;
 
       if (initialInvoice) {
         await updateInvoice(
@@ -298,7 +354,7 @@ export function InvoiceFormModal({
             contactId,
             companyId,
             invoiceType,
-            depositPercentage: invoiceType === 'deposit' ? totals.depositPercentage : 100,
+            depositPercentage: persistedDepositPct,
             deductedDepositInvoiceId: cleanDeductedId,
             deductedDepositAmount: cleanDeductedAmount,
             showEuroConversion,
@@ -320,7 +376,7 @@ export function InvoiceFormModal({
           contactId,
           companyId,
           invoiceType,
-          depositPercentage: invoiceType === 'deposit' ? totals.depositPercentage : 100,
+          depositPercentage: persistedDepositPct,
           deductedDepositInvoiceId: cleanDeductedId,
           deductedDepositAmount: cleanDeductedAmount,
           showEuroConversion,
@@ -433,7 +489,7 @@ export function InvoiceFormModal({
         {/* Type de facturation */}
         <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3 space-y-3">
           <div className="text-xs font-semibold text-slate-800">Type de facturation</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5" role="radiogroup" aria-label="Type de facturation">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5" role="radiogroup" aria-label="Type de facturation">
             <label
               className={`flex items-start gap-2.5 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
                 invoiceType === 'standard'
@@ -446,13 +502,16 @@ export function InvoiceFormModal({
                 name="invoiceType"
                 value="standard"
                 checked={invoiceType === 'standard'}
-                onChange={() => setInvoiceType('standard')}
+                onChange={() => {
+                  setInvoiceType('standard');
+                  setDeductedDepositInvoiceId('');
+                }}
                 className="mt-0.5 accent-[#19283E]"
               />
               <div>
                 <div className="text-sm font-medium text-[#19283E]">Facture Standard (100%)</div>
                 <div className="text-[11px] text-slate-500">
-                  Facture classique ou facture de solde après acompte
+                  Facturation classique à 100 %
                 </div>
               </div>
             </label>
@@ -481,7 +540,30 @@ export function InvoiceFormModal({
               <div>
                 <div className="text-sm font-medium text-[#19283E]">Facture d'Acompte (%)</div>
                 <div className="text-[11px] text-slate-500">
-                  Calcul automatique selon le pourcentage saisi
+                  Calcul selon le pourcentage saisi
+                </div>
+              </div>
+            </label>
+
+            <label
+              className={`flex items-start gap-2.5 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
+                invoiceType === 'balance'
+                  ? 'border-[#19283E] bg-white ring-1 ring-[#19283E]/20'
+                  : 'border-slate-200 bg-white/70 hover:bg-white'
+              }`}
+            >
+              <input
+                type="radio"
+                name="invoiceType"
+                value="balance"
+                checked={invoiceType === 'balance'}
+                onChange={() => setInvoiceType('balance')}
+                className="mt-0.5 accent-[#19283E]"
+              />
+              <div>
+                <div className="text-sm font-medium text-[#19283E]">Facture de solde</div>
+                <div className="text-[11px] text-slate-500">
+                  Solde après acompte émis par l&apos;entité
                 </div>
               </div>
             </label>
@@ -520,6 +602,52 @@ export function InvoiceFormModal({
               </div>
             </div>
           )}
+
+          {invoiceType === 'balance' && (
+            <div className="rounded-lg border border-emerald-200 bg-white p-3 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label htmlFor="inv-deduct-deposit" className="text-xs font-semibold text-slate-800">
+                  Facture d&apos;acompte émise par {previewEntity?.name ?? "l'entité sélectionnée"} *
+                </label>
+                <span className="text-[11px] font-medium text-emerald-700">
+                  {entityDepositOptions.length > 0
+                    ? `${entityDepositOptions.length} facture(s) d'acompte disponible(s)`
+                    : "Aucune facture d'acompte pour cette entité"}
+                </span>
+              </div>
+              <select
+                id="inv-deduct-deposit"
+                value={deductedDepositInvoiceId}
+                onChange={(e) => handleSelectDepositInvoice(e.target.value)}
+                className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
+              >
+                <option value="">
+                  {entityDepositOptions.length > 0
+                    ? "Sélectionner une facture d'acompte..."
+                    : "Aucune facture d'acompte émise par cette entité"}
+                </option>
+                {entityDepositOptions.map((dep) => {
+                  const depCompany = companies.find((c) => c.id === dep.companyId);
+                  const depContact = contacts.find((c) => c.id === dep.contactId);
+                  const clientName =
+                    depCompany?.tradeName ||
+                    depCompany?.legalName ||
+                    depContact?.fullName ||
+                    'Client';
+                  const paidOrTotal = dep.paidAmount > 0 ? dep.paidAmount : dep.total;
+                  return (
+                    <option key={dep.id} value={dep.id}>
+                      {dep.invoiceNumber} — {clientName} — Acompte {dep.depositPercentage ?? 100}% (
+                      {formatCurrency(paidOrTotal, dep.currency)}) [{dep.status}]
+                    </option>
+                  );
+                })}
+              </select>
+              <p className="text-[11px] text-slate-500">
+                La sélection d&apos;une facture d&apos;acompte remplit automatiquement les lignes facturées, le client et la devise.
+              </p>
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -534,6 +662,7 @@ export function InvoiceFormModal({
               onChange={(e) => {
                 const eid = e.target.value;
                 setEntityId(eid);
+                setDeductedDepositInvoiceId('');
                 const legal = legalSettings.find((l) => l.entityId === eid);
                 if (legal) setLegalMentions(legal.defaultLegalMentions);
               }}
@@ -588,38 +717,6 @@ export function InvoiceFormModal({
             </select>
           </div>
         </div>
-
-        {invoiceType === 'standard' && (
-          <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 space-y-1.5">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <label htmlFor="inv-deduct-deposit" className="text-xs font-medium text-slate-700">
-                Déduire un acompte (Facture de solde)
-              </label>
-              {paidDepositOptions.length > 0 && (
-                <span className="text-[11px] font-medium text-emerald-700">
-                  {paidDepositOptions.length} acompte(s) payé(s) disponible(s)
-                </span>
-              )}
-            </div>
-            <select
-              id="inv-deduct-deposit"
-              value={deductedDepositInvoiceId}
-              onChange={(e) => setDeductedDepositInvoiceId(e.target.value)}
-              className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
-            >
-              <option value="">
-                {paidDepositOptions.length > 0
-                  ? 'Aucun acompte déduit (Facture 100 %)'
-                  : 'Aucun acompte payé disponible pour ce client'}
-              </option>
-              {paidDepositOptions.map((dep) => (
-                <option key={dep.id} value={dep.id}>
-                  {dep.invoiceNumber} — Acompte {dep.depositPercentage ?? 100}% ({formatCurrency(dep.paidAmount || dep.total, dep.currency)})
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
 
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
           <div>
@@ -806,9 +903,9 @@ export function InvoiceFormModal({
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 pt-2 border-t border-slate-200 text-xs">
             <span className="text-slate-500">TVA non applicable</span>
             <div className="space-y-1 text-right">
-              {(invoiceType === 'deposit' || totals.deductedDepositAmount > 0) && (
+              {(invoiceType === 'deposit' || invoiceType === 'balance' || totals.deductedDepositAmount > 0) && (
                 <div className="text-slate-600 font-sans tabular-nums">
-                  Total prestations (100%) : {formatCurrency(totals.subtotal, currency)}
+                  Total prestation (100%) : {formatCurrency(totals.subtotal, currency)}
                 </div>
               )}
               {invoiceType === 'deposit' && (
@@ -817,17 +914,15 @@ export function InvoiceFormModal({
                   {formatCurrency(totals.total, currency)}
                 </div>
               )}
-              {invoiceType === 'standard' && totals.deductedDepositAmount > 0 && (
+              {(invoiceType === 'balance' || (invoiceType === 'standard' && totals.deductedDepositAmount > 0)) && (
                 <div className="text-emerald-700 font-sans tabular-nums font-medium">
-                  Acompte déduit ({selectedDepositInvoice?.invoiceNumber ?? ''}) : -{' '}
+                  Acompte payé ({totals.depositPercentage}%) : -{' '}
                   {formatCurrency(totals.deductedDepositAmount, currency)}
                 </div>
               )}
               <div className="font-sans tabular-nums text-sm text-[#19283E] font-bold">
-                {invoiceType === 'deposit'
-                  ? `Total acompte (${totals.depositPercentage}%) : ${formatCurrency(totals.total, currency)}`
-                  : totals.deductedDepositAmount > 0
-                  ? `Solde net à payer : ${formatCurrency(totals.total, currency)}`
+                {invoiceType === 'deposit' || invoiceType === 'balance' || totals.deductedDepositAmount > 0
+                  ? `Net à payer : ${formatCurrency(totals.total, currency)}`
                   : `Total net : ${formatCurrency(totals.total, currency)}`}
               </div>
             </div>

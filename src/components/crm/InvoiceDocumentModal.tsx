@@ -29,6 +29,7 @@ interface InvoiceDocumentModalProps {
 export function InvoiceDocumentModal({ open, onClose, invoice }: InvoiceDocumentModalProps) {
   const {
     entities,
+    invoices,
     invoiceItems,
     legalSettings,
     companies,
@@ -53,6 +54,14 @@ export function InvoiceDocumentModal({ open, onClose, invoice }: InvoiceDocument
     .filter((i) => i.invoiceId === invoice.id)
     .sort((a, b) => a.orderIndex - b.orderIndex);
 
+  const linkedDepositInvoice = invoice.deductedDepositInvoiceId
+    ? invoices.find((i) => i.id === invoice.deductedDepositInvoiceId)
+    : undefined;
+  const resolvedDepositPercentage =
+    invoice.depositPercentage && invoice.depositPercentage < 100
+      ? invoice.depositPercentage
+      : linkedDepositInvoice?.depositPercentage ?? invoice.depositPercentage;
+
   const approvalStatus = getEffectiveInvoiceApprovalStatus(invoice);
   const effectiveStatus = resolveInvoiceStatus(invoice, new Date().toISOString());
   const isSuperAdmin = canValidateInvoices(user);
@@ -68,7 +77,11 @@ export function InvoiceDocumentModal({ open, onClose, invoice }: InvoiceDocument
       });
       return;
     }
-    const filename = await exportInvoicePdf(invoice, items, { entity, legal, company, contact });
+    const filename = await exportInvoicePdf(
+      { ...invoice, depositPercentage: resolvedDepositPercentage },
+      items,
+      { entity, legal, company, contact }
+    );
     addToast({ type: 'success', title: 'Facture PDF téléchargée', description: filename });
   };
 
@@ -218,7 +231,7 @@ export function InvoiceDocumentModal({ open, onClose, invoice }: InvoiceDocument
           subtotal={invoice.subtotal}
           total={invoice.total}
           invoiceType={invoice.invoiceType}
-          depositPercentage={invoice.depositPercentage}
+          depositPercentage={resolvedDepositPercentage}
           deductedDepositAmount={invoice.deductedDepositAmount}
           showEuroConversion={invoice.showEuroConversion}
           euroExchangeRate={invoice.euroExchangeRate}

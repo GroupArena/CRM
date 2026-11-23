@@ -319,5 +319,56 @@ test('buildArenaA4Pdf embeds Poppins & Montserrat TrueType fonts on A4 for both 
   const invoicePdfText = Buffer.from(invoicePdf.doc.output('arraybuffer')).toString('latin1');
   assert.match(invoicePdfText, /\/BaseFont\s+\/Poppins/);
   assert.match(invoicePdfText, /\/BaseFont\s+\/Montserrat/);
+
+  const depositPdf = await buildArenaA4Pdf(
+    {
+      kind: 'invoice',
+      documentNumber: 'FAC-IMP-2026-0002',
+      entityId: 'improveo',
+      issueDate: '2026-11-19',
+      secondaryDate: '2026-12-19',
+      currency: 'MGA',
+      subtotal: 10000000,
+      total: 3000000,
+      invoiceType: 'deposit',
+      depositPercentage: 30,
+      items: [
+        {
+          label: 'Audit & Conseil Stratégique',
+          quantity: 1,
+          unitPrice: 10000000,
+          lineTotal: 10000000,
+        },
+      ],
+    },
+    commonCtx
+  );
+  assert.equal(depositPdf.fontsEmbedded, true);
+
+  const balancePdf = await buildArenaA4Pdf(
+    {
+      kind: 'invoice',
+      documentNumber: 'FAC-IMP-2026-0003',
+      entityId: 'improveo',
+      issueDate: '2026-11-25',
+      secondaryDate: '2026-12-25',
+      currency: 'MGA',
+      subtotal: 10000000,
+      total: 7000000,
+      invoiceType: 'balance',
+      depositPercentage: 30,
+      deductedDepositAmount: 3000000,
+      items: [
+        {
+          label: 'Audit & Conseil Stratégique',
+          quantity: 1,
+          unitPrice: 10000000,
+          lineTotal: 10000000,
+        },
+      ],
+    },
+    commonCtx
+  );
+  assert.equal(balancePdf.fontsEmbedded, true);
 });
 

@@ -361,7 +361,7 @@
         "companyId": { "type": "string", "maxLength": 128 },
         "quoteId": { "type": "string", "maxLength": 128 },
         "invoiceNumber": { "type": "string", "maxLength": 60 },
-        "invoiceType": { "type": "string", "enum": ["standard", "deposit"] },
+        "invoiceType": { "type": "string", "enum": ["standard", "deposit", "balance"] },
         "depositPercentage": { "type": "number" },
         "deductedDepositInvoiceId": { "type": "string", "maxLength": 128 },
         "deductedDepositAmount": { "type": "number" },

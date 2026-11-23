@@ -5,13 +5,19 @@ import type {
   CrmEntity,
   Invoice,
   InvoiceItem,
+  InvoiceType,
   LegalSetting,
   Quote,
   QuoteItem,
 } from '../types';
 import { formatCurrency, formatDateFr } from './crmLogic';
 import { getBrandLogoPath, getEntityInvoiceTheme, resolveAssetUrl } from './branding';
-import { computeEuroConversion } from './billingLogic';
+import {
+  computeEuroConversion,
+  getDocumentAmountInWordsPrefix,
+  getInvoiceTotalsDisplaySpec,
+  shouldRenderStampAndSignature,
+} from './billingLogic';
 import { formatInvoiceAmountInWords } from './numberToWordsFr';
 
 interface PdfDocContext {
@@ -231,7 +237,7 @@ interface UnifiedPdfDocumentInput {
   currency: string;
   subtotal: number;
   total: number;
-  invoiceType?: 'standard' | 'deposit';
+  invoiceType?: InvoiceType;
   depositPercentage?: number;
   deductedDepositAmount?: number;
   showEuroConversion?: boolean;
@@ -256,20 +262,19 @@ export async function buildArenaA4Pdf(
   const fonts = await registerArenaPdfFonts(doc);
   const theme = getEntityInvoiceTheme(ctx.entity?.id ?? input.entityId, ctx.entity?.color);
 
-  const isDeposit = input.kind === 'invoice' && input.invoiceType === 'deposit';
-  const hasDeductedDeposit =
-    input.kind === 'invoice' &&
-    !isDeposit &&
-    Boolean(input.deductedDepositAmount && input.deductedDepositAmount > 0);
-
-  const docTitle =
-    input.kind === 'quote'
-      ? 'DEVIS'
-      : isDeposit
-      ? "FACTURE D'ACOMPTE"
-      : hasDeductedDeposit
-      ? 'FACTURE DE SOLDE'
-      : 'FACTURE';
+  const {
+    docTitle,
+    isDeposit,
+    isBalance,
+    depositRowLabel,
+    netLabel,
+  } = getInvoiceTotalsDisplaySpec({
+    kind: input.kind,
+    invoiceType: input.invoiceType,
+    subtotal: input.subtotal,
+    depositPercentage: input.depositPercentage,
+    deductedDepositAmount: input.deductedDepositAmount,
+  });
 
   // --- 1. Top decorative angled banner (Charte Graphique) ---
   doc.setFillColor(...theme.softTintRgb);
@@ -285,11 +290,14 @@ export async function buildArenaA4Pdf(
   doc.triangle(116, 11, 132, 0, 120, 11, 'F');
 
   // --- 2. Load entity light logo + Signature & Tampon ---
+  const includeStampAndSignature = shouldRenderStampAndSignature(input.kind);
   const logoSrc = getBrandLogoPath(ctx.entity?.id ?? input.entityId ?? 'group', 'light');
   const [logoData, stampData, signatureData] = await Promise.all([
     loadImageAsDataUrl(logoSrc),
-    loadImageAsDataUrl(ctx.legal?.stampImageUrl),
-    loadImageAsDataUrl(ctx.legal?.signatureImageUrl),
+    includeStampAndSignature ? loadImageAsDataUrl(ctx.legal?.stampImageUrl) : Promise.resolve(null),
+    includeStampAndSignature
+      ? loadImageAsDataUrl(ctx.legal?.signatureImageUrl)
+      : Promise.resolve(null),
   ]);
 
   drawFittedImage(doc, logoData, 14, 15, 58, 17);
@@ -458,27 +466,27 @@ export async function buildArenaA4Pdf(
   tableY += 6;
 
   // Subtotal / Deposit / Deducted Deposit breakdown (no TVA)
-  if (isDeposit) {
+  if (isDeposit && depositRowLabel) {
     doc.setFont(fonts.bodyFamily, fonts.bodyNormalStyle);
     doc.setFontSize(8.5);
     doc.setTextColor(55, 65, 81);
-    doc.text('TOTAL PRESTATIONS (100%)', 152, tableY, { align: 'right' });
+    doc.text('TOTAL PRESTATION (100%)', 152, tableY, { align: 'right' });
     doc.text(formatNumberSpacing(input.subtotal), 179, tableY, { align: 'center' });
     tableY += 5.5;
-    doc.text(`ACOMPTE FACTURÉ (${input.depositPercentage ?? 100}%)`, 152, tableY, {
+    doc.text(depositRowLabel, 152, tableY, {
       align: 'right',
     });
     doc.text(formatNumberSpacing(input.total), 179, tableY, { align: 'center' });
     tableY += 6;
-  } else if (hasDeductedDeposit && input.deductedDepositAmount) {
+  } else if (isBalance && depositRowLabel) {
     doc.setFont(fonts.bodyFamily, fonts.bodyNormalStyle);
     doc.setFontSize(8.5);
     doc.setTextColor(55, 65, 81);
-    doc.text('TOTAL PRESTATIONS (100%)', 152, tableY, { align: 'right' });
+    doc.text('TOTAL PRESTATION (100%)', 152, tableY, { align: 'right' });
     doc.text(formatNumberSpacing(input.subtotal), 179, tableY, { align: 'center' });
     tableY += 5.5;
-    doc.text('ACOMPTE DÉDUIT', 152, tableY, { align: 'right' });
-    doc.text(`- ${formatNumberSpacing(input.deductedDepositAmount)}`, 179, tableY, {
+    doc.text(depositRowLabel, 152, tableY, { align: 'right' });
+    doc.text(`- ${formatNumberSpacing(input.deductedDepositAmount ?? 0)}`, 179, tableY, {
       align: 'center',
     });
     tableY += 6;
@@ -487,7 +495,7 @@ export async function buildArenaA4Pdf(
   doc.setFont(fonts.headingFamily, fonts.headingBoldStyle);
   doc.setFontSize(9.5);
   doc.setTextColor(17, 24, 39);
-  doc.text('TOTAL', 152, tableY, { align: 'right' });
+  doc.text(netLabel, 152, tableY, { align: 'right' });
   doc.text(formatNumberSpacing(input.total), 179, tableY, { align: 'center' });
 
   doc.setFont(fonts.bodyFamily, fonts.bodyNormalStyle);
@@ -502,10 +510,10 @@ export async function buildArenaA4Pdf(
     ? computeEuroConversion(input.total, input.euroExchangeRate)
     : null;
 
-  const prefixSentence =
-    input.kind === 'quote'
-      ? `Arrêter le présent devis à la somme de ${formatCurrency(input.total, input.currency)} (${totalWords})`
-      : `Arrêter à la somme de ${formatCurrency(input.total, input.currency)} (${totalWords})`;
+  const prefixSentence = `${getDocumentAmountInWordsPrefix(input.kind)}${formatCurrency(
+    input.total,
+    input.currency
+  )} (${totalWords})`;
 
   const sentence = euroCalc
     ? `${prefixSentence} soit ${euroCalc.formattedEuro}* (${formatInvoiceAmountInWords(
@@ -567,7 +575,7 @@ export async function buildArenaA4Pdf(
     doc.setFontSize(6.7);
     const quoteNoteText =
       'Merci de bien vouloir nous envoyer le Bon de Commande correspondant ou nous retourner la proforma signée avec la mention "bon pour accord" pour valider la commande';
-    const wrappedQuoteNote = doc.splitTextToSize(quoteNoteText, 118) as string[];
+    const wrappedQuoteNote = doc.splitTextToSize(quoteNoteText, 182) as string[];
     wrappedQuoteNote.forEach((wLine) => {
       condLinesToDraw.push({
         text: wLine,
@@ -691,17 +699,19 @@ export async function buildArenaA4Pdf(
     condY += line.stepAfter;
   }
 
-  // Right side: Tampon + Signature bottom-aligned beside conditions above footer
-  const effectiveWordsY = pageAddedForFooter ? 20 : wordsY;
-  const sigBoxY = Math.max(effectiveWordsY + 4, footerY - 46);
-  const stampMaxH = Math.max(28, footerY - 4 - sigBoxY);
-  if (stampData) {
-    drawFittedImage(doc, stampData, 128, sigBoxY, 68, stampMaxH, true);
-  }
-  if (signatureData) {
-    const sigMaxH = Math.min(24, stampMaxH * 0.6);
-    const sigTopY = sigBoxY + Math.max(10, stampMaxH - sigMaxH);
-    drawFittedImage(doc, signatureData, 134, sigTopY, 56, sigMaxH, true);
+  // Right side: Tampon + Signature bottom-aligned beside conditions above footer (factures uniquement)
+  if (includeStampAndSignature) {
+    const effectiveWordsY = pageAddedForFooter ? 20 : wordsY;
+    const sigBoxY = Math.max(effectiveWordsY + 4, footerY - 46);
+    const stampMaxH = Math.max(28, footerY - 4 - sigBoxY);
+    if (stampData) {
+      drawFittedImage(doc, stampData, 128, sigBoxY, 68, stampMaxH, true);
+    }
+    if (signatureData) {
+      const sigMaxH = Math.min(24, stampMaxH * 0.6);
+      const sigTopY = sigBoxY + Math.max(10, stampMaxH - sigMaxH);
+      drawFittedImage(doc, signatureData, 134, sigTopY, 56, sigMaxH, true);
+    }
   }
 
   // --- 8. Bottom angled footer banner with Phone & Email ---

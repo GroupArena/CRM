@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Mail, Phone } from 'lucide-react';
 import { BrandLogo } from '../ui/BrandLogo';
-import type { Company, Contact, CrmEntity, LegalSetting } from '../../types';
+import type { Company, Contact, CrmEntity, InvoiceType, LegalSetting } from '../../types';
 import { getEntityInvoiceTheme } from '../../utils/branding';
-import { computeEuroConversion } from '../../utils/billingLogic';
+import {
+  computeEuroConversion,
+  getDocumentAmountInWordsPrefix,
+  getInvoiceTotalsDisplaySpec,
+  shouldRenderStampAndSignature,
+} from '../../utils/billingLogic';
 import { formatCurrency, formatDateFr } from '../../utils/crmLogic';
 import { formatInvoiceAmountInWords } from '../../utils/numberToWordsFr';
 
@@ -29,7 +34,7 @@ export interface A4DocumentData {
   currency: string;
   subtotal: number;
   total: number;
-  invoiceType?: 'standard' | 'deposit';
+  invoiceType?: InvoiceType;
   depositPercentage?: number;
   deductedDepositAmount?: number;
   showEuroConversion?: boolean;
@@ -107,20 +112,19 @@ export function A4DocumentSheet({
 
   const theme = getEntityInvoiceTheme(entityId, entity?.color);
 
-  const isDeposit = kind === 'invoice' && invoiceType === 'deposit';
-  const hasDeductedDeposit =
-    kind === 'invoice' &&
-    !isDeposit &&
-    Boolean(deductedDepositAmount && deductedDepositAmount > 0);
-
-  const docTitle =
-    kind === 'quote'
-      ? 'DEVIS'
-      : isDeposit
-      ? "FACTURE D'ACOMPTE"
-      : hasDeductedDeposit
-      ? 'FACTURE DE SOLDE'
-      : 'FACTURE';
+  const {
+    docTitle,
+    isDeposit,
+    isBalance,
+    depositRowLabel,
+    netLabel,
+  } = getInvoiceTotalsDisplaySpec({
+    kind,
+    invoiceType,
+    subtotal,
+    depositPercentage,
+    deductedDepositAmount,
+  });
 
   const currencyLabel = currency === 'MGA' ? 'Ariary' : currency;
   const totalWords = formatInvoiceAmountInWords(total, currency);
@@ -320,37 +324,37 @@ export function A4DocumentSheet({
                   {isDeposit && (
                     <>
                       <div className="flex items-center gap-6 text-slate-600">
-                        <span>TOTAL PRESTATIONS (100%)</span>
+                        <span>TOTAL PRESTATION (100%)</span>
                         <span className="w-28 px-2 text-right font-sans tabular-nums whitespace-nowrap">
                           {formatSpacedNumber(subtotal)}
                         </span>
                       </div>
                       <div className="flex items-center gap-6 text-[#AD7300] font-medium">
-                        <span>ACOMPTE FACTURÉ ({depositPercentage ?? 100}%)</span>
+                        <span>{depositRowLabel}</span>
                         <span className="w-28 px-2 text-right font-sans tabular-nums whitespace-nowrap">
                           {formatSpacedNumber(total)}
                         </span>
                       </div>
                     </>
                   )}
-                  {hasDeductedDeposit && deductedDepositAmount && (
+                  {isBalance && (
                     <>
                       <div className="flex items-center gap-6 text-slate-600">
-                        <span>TOTAL PRESTATIONS (100%)</span>
+                        <span>TOTAL PRESTATION (100%)</span>
                         <span className="w-28 px-2 text-right font-sans tabular-nums whitespace-nowrap">
                           {formatSpacedNumber(subtotal)}
                         </span>
                       </div>
                       <div className="flex items-center gap-6 text-emerald-700 font-medium">
-                        <span>ACOMPTE DÉDUIT</span>
+                        <span>{depositRowLabel}</span>
                         <span className="w-28 px-2 text-right font-sans tabular-nums whitespace-nowrap">
-                          - {formatSpacedNumber(deductedDepositAmount)}
+                          - {formatSpacedNumber(deductedDepositAmount ?? 0)}
                         </span>
                       </div>
                     </>
                   )}
                   <div className="flex items-center gap-6 text-sm font-bold text-slate-900 pt-1">
-                    <span className="font-display">TOTAL</span>
+                    <span className="font-display">{netLabel}</span>
                     <span className="w-28 px-2 text-right font-display tabular-nums whitespace-nowrap">
                       {formatSpacedNumber(total)}
                     </span>
@@ -361,9 +365,7 @@ export function A4DocumentSheet({
                 {/* Montant en lettres + conversion Euro optionnelle */}
                 <div className="pt-1 space-y-2 text-[12px] text-slate-900 leading-relaxed">
                   <p>
-                    {kind === 'quote'
-                      ? 'Arrêter le présent devis à la somme de '
-                      : 'Arrêter à la somme de '}
+                    {getDocumentAmountInWordsPrefix(kind)}
                     <strong>{formatCurrency(total, currency)}</strong> ({totalWords})
                     {euroCalc ? (
                       <>
@@ -391,9 +393,13 @@ export function A4DocumentSheet({
                 </div>
               </div>
 
-              {/* Conditions + Coordonnées Bancaires à gauche, Tampon & Signature à droite */}
+              {/* Conditions + Coordonnées Bancaires à gauche, Tampon & Signature à droite (factures uniquement) */}
               <div className="mt-auto grid grid-cols-12 gap-6 pt-2 items-end">
-                <div className="col-span-7 text-[9.5px] text-slate-800 space-y-0.5 leading-snug">
+                <div
+                  className={`${
+                    shouldRenderStampAndSignature(kind) ? 'col-span-7' : 'col-span-12'
+                  } text-[9.5px] text-slate-800 space-y-0.5 leading-snug`}
+                >
                   {kind === 'quote' ? (
                     <>
                       <p className="text-[10px] font-bold text-slate-900">Notes</p>
@@ -427,33 +433,35 @@ export function A4DocumentSheet({
                   )}
                 </div>
 
-                <div className="col-span-5 flex flex-col items-end justify-end min-h-[164px] relative">
-                  {legal?.stampImageUrl || legal?.signatureImageUrl ? (
-                    <div className="relative flex flex-col items-center justify-center w-64 min-h-[156px]">
-                      {legal.stampImageUrl && (
-                        <img
-                          src={legal.stampImageUrl}
-                          alt={`Tampon ${entity?.name ?? 'entité'}`}
-                          className="max-h-40 max-w-[230px] w-auto object-contain opacity-90"
-                        />
-                      )}
-                      {legal.signatureImageUrl && (
-                        <img
-                          src={legal.signatureImageUrl}
-                          alt={`Signature ${entity?.name ?? 'entité'}`}
-                          className={`max-h-20 max-w-[200px] w-auto object-contain ${
-                            legal.stampImageUrl ? '-mt-12 relative z-10' : ''
-                          }`}
-                        />
-                      )}
-                    </div>
-                  ) : (
-                    <div className="rounded-lg border border-dashed border-slate-300 px-4 py-5 text-center text-[11px] text-slate-400">
-                      Cachet &amp; Signature
-                      <div className="text-[10px]">(À importer dans Paramètres)</div>
-                    </div>
-                  )}
-                </div>
+                {shouldRenderStampAndSignature(kind) && (
+                  <div className="col-span-5 flex flex-col items-end justify-end min-h-[164px] relative">
+                    {legal?.stampImageUrl || legal?.signatureImageUrl ? (
+                      <div className="relative flex flex-col items-center justify-center w-64 min-h-[156px]">
+                        {legal.stampImageUrl && (
+                          <img
+                            src={legal.stampImageUrl}
+                            alt={`Tampon ${entity?.name ?? 'entité'}`}
+                            className="max-h-40 max-w-[230px] w-auto object-contain opacity-90"
+                          />
+                        )}
+                        {legal.signatureImageUrl && (
+                          <img
+                            src={legal.signatureImageUrl}
+                            alt={`Signature ${entity?.name ?? 'entité'}`}
+                            className={`max-h-20 max-w-[200px] w-auto object-contain ${
+                              legal.stampImageUrl ? '-mt-12 relative z-10' : ''
+                            }`}
+                          />
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border border-dashed border-slate-300 px-4 py-5 text-center text-[11px] text-slate-400">
+                        Cachet &amp; Signature
+                        <div className="text-[10px]">(À importer dans Paramètres)</div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
