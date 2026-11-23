@@ -1,0 +1,362 @@
+import type {
+  ActionStatus,
+  CrmAction,
+  CrmEntity,
+  Deal,
+  EntityScope,
+  PipelineStage,
+  Prospect,
+  UserProfile,
+} from '../types';
+
+export function canViewAllEntities(user: UserProfile | null): boolean {
+  if (!user || !user.active) return false;
+  return user.role === 'super_admin';
+}
+
+export function canWriteCrm(user: UserProfile | null): boolean {
+  if (!user || !user.active) return false;
+  return user.role !== 'reader';
+}
+
+export function canManageUsers(user: UserProfile | null): boolean {
+  if (!user || !user.active) return false;
+  return user.role === 'super_admin' || user.role === 'entity_admin';
+}
+
+export function canManageEntities(user: UserProfile | null): boolean {
+  if (!user || !user.active) return false;
+  return user.role === 'super_admin';
+}
+
+export function canEditProspect(user: UserProfile | null, prospect: Prospect): boolean {
+  if (!user || !user.active || user.role === 'reader') return false;
+  if (user.role === 'super_admin') return true;
+  const hasEntity =
+    user.entityIds.includes(prospect.primaryEntityId) ||
+    prospect.sharedEntityIds.some((id) => user.entityIds.includes(id));
+  if (!hasEntity) return false;
+  if (user.role === 'entity_admin' || user.role === 'manager') return true;
+  return prospect.ownerUid === user.uid;
+}
+
+export function canDeleteProspect(user: UserProfile | null, prospect: Prospect): boolean {
+  if (!user || !user.active) return false;
+  if (user.role === 'super_admin') return true;
+  if (user.role === 'entity_admin' || user.role === 'manager') {
+    return user.entityIds.includes(prospect.primaryEntityId);
+  }
+  return false;
+}
+
+export function getAuthorizedEntities(
+  user: UserProfile | null,
+  entities: CrmEntity[]
+): CrmEntity[] {
+  if (!user || !user.active) return [];
+  const activeEntities = entities.filter((e) => e.active);
+  if (user.role === 'super_admin') return activeEntities;
+  return activeEntities.filter((e) => user.entityIds.includes(e.id));
+}
+
+export function resolveEffectiveActionStatus(
+  action: CrmAction,
+  referenceDateIso: string
+): ActionStatus {
+  if (action.status === 'done' || action.status === 'cancelled') {
+    return action.status;
+  }
+  const today = referenceDateIso.slice(0, 10);
+  if (action.dueDate && action.dueDate < today) {
+    return 'late';
+  }
+  return 'planned';
+}
+
+export function filterProspectsByScope(
+  prospects: Prospect[],
+  scope: EntityScope,
+  includeArchived = false
+): Prospect[] {
+  return prospects.filter((p) => {
+    if (!includeArchived && p.archived) return false;
+    if (scope === 'all') return true;
+    return p.primaryEntityId === scope || p.sharedEntityIds.includes(scope);
+  });
+}
+
+export function filterActionsByScope(
+  actions: CrmAction[],
+  scope: EntityScope
+): CrmAction[] {
+  if (scope === 'all') return actions;
+  return actions.filter((a) => a.entityId === scope);
+}
+
+export function filterDealsByScope(deals: Deal[], scope: EntityScope): Deal[] {
+  if (scope === 'all') return deals;
+  return deals.filter((d) => d.entityId === scope);
+}
+
+export interface DashboardKpis {
+  totalProspects: number;
+  newProspects: number;
+  toFollowUpProspects: number;
+  scheduledMeetings: number;
+  lateActions: number;
+  openDeals: number;
+  pipelineValue: number;
+  wonDeals: number;
+  lostDeals: number;
+  conversionRate: number;
+}
+
+export function computeDashboardKpis(
+  prospects: Prospect[],
+  actions: CrmAction[],
+  deals: Deal[],
+  referenceDateIso: string
+): DashboardKpis {
+  const activeProspects = prospects.filter((p) => !p.archived);
+  const totalProspects = activeProspects.length;
+  const newProspects = activeProspects.filter((p) => p.status === 'Nouveau').length;
+  const toFollowUpProspects = activeProspects.filter(
+    (p) => p.status === 'À recontacter' || p.status === 'Sans réponse'
+  ).length;
+
+  const scheduledMeetings = actions.filter((a) => {
+    const eff = resolveEffectiveActionStatus(a, referenceDateIso);
+    return (
+      (eff === 'planned' || eff === 'late') &&
+      (a.type === 'Rendez-vous' || a.type === 'Réunion')
+    );
+  }).length;
+
+  const lateActions = actions.filter(
+    (a) => resolveEffectiveActionStatus(a, referenceDateIso) === 'late'
+  ).length;
+
+  const openDealsList = deals.filter((d) => d.status === 'open');
+  const wonDealsList = deals.filter((d) => d.status === 'won');
+  const lostDealsList = deals.filter((d) => d.status === 'lost');
+
+  const pipelineValue = openDealsList.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+  const closedCount = wonDealsList.length + lostDealsList.length;
+  const conversionRate =
+    closedCount > 0 ? Math.round((wonDealsList.length / closedCount) * 100) : 0;
+
+  return {
+    totalProspects,
+    newProspects,
+    toFollowUpProspects,
+    scheduledMeetings,
+    lateActions,
+    openDeals: openDealsList.length,
+    pipelineValue,
+    wonDeals: wonDealsList.length,
+    lostDeals: lostDealsList.length,
+    conversionRate,
+  };
+}
+
+export function computeProspectsByStatus(prospects: Prospect[]) {
+  const counts = new Map<string, number>();
+  for (const p of prospects) {
+    if (p.archived) continue;
+    counts.set(p.status, (counts.get(p.status) ?? 0) + 1);
+  }
+  return Array.from(counts.entries()).map(([status, count]) => ({
+    status,
+    count,
+  }));
+}
+
+export function computeProspectsByEntity(
+  prospects: Prospect[],
+  entities: CrmEntity[]
+) {
+  return entities.map((entity) => ({
+    entityId: entity.id,
+    name: entity.name,
+    color: entity.color,
+    count: prospects.filter(
+      (p) => !p.archived && p.primaryEntityId === entity.id
+    ).length,
+  }));
+}
+
+export function computePipelineByStage(
+  deals: Deal[],
+  stages: PipelineStage[]
+) {
+  const sortedStages = [...stages].sort((a, b) => a.order - b.order);
+  const stageMap = new Map<string, { name: string; total: number; count: number }>();
+
+  for (const stage of sortedStages) {
+    const existing = stageMap.get(stage.name) ?? { name: stage.name, total: 0, count: 0 };
+    const matchingDeals = deals.filter((d) => d.stageId === stage.id);
+    existing.total += matchingDeals.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+    existing.count += matchingDeals.length;
+    stageMap.set(stage.name, existing);
+  }
+
+  return Array.from(stageMap.values());
+}
+
+export function computeActionsByType(actions: CrmAction[]) {
+  const counts = new Map<string, number>();
+  for (const a of actions) {
+    counts.set(a.type, (counts.get(a.type) ?? 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([type, count]) => ({ type, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export function computeActivityLast30Days(
+  actions: CrmAction[],
+  referenceDateIso: string
+) {
+  const endDate = new Date(referenceDateIso.slice(0, 10) + 'T12:00:00Z');
+  const days: { date: string; label: string; planned: number; done: number }[] = [];
+
+  for (let offset = 29; offset >= 0; offset--) {
+    const d = new Date(endDate);
+    d.setUTCDate(d.getUTCDate() - offset);
+    const iso = d.toISOString().slice(0, 10);
+    const label = `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+    days.push({ date: iso, label, planned: 0, done: 0 });
+  }
+
+  const dayMap = new Map(days.map((d) => [d.date, d]));
+  for (const action of actions) {
+    const createdDay = action.createdAt.slice(0, 10);
+    const completedDay = action.completedAt?.slice(0, 10);
+    const createdBucket = dayMap.get(createdDay);
+    if (createdBucket) {
+      createdBucket.planned += 1;
+    }
+    if (action.status === 'done' && completedDay) {
+      const doneBucket = dayMap.get(completedDay);
+      if (doneBucket) {
+        doneBucket.done += 1;
+      }
+    }
+  }
+
+  return days;
+}
+
+let activeDefaultCurrency = 'MGA';
+
+export function setActiveDefaultCurrency(currency?: string): void {
+  if (currency && currency.trim()) {
+    activeDefaultCurrency = currency.trim().toUpperCase();
+  }
+}
+
+export function formatCurrency(amount: number, currency?: string): string {
+  const code = (currency || activeDefaultCurrency || 'MGA').toUpperCase();
+  const value = Number(amount) || 0;
+  if (code === 'MGA') {
+    const formatted = new Intl.NumberFormat('fr-FR', {
+      maximumFractionDigits: 0,
+    }).format(Math.round(value));
+    return `${formatted} Ar`;
+  }
+  try {
+    return new Intl.NumberFormat('fr-FR', {
+      style: 'currency',
+      currency: code,
+      maximumFractionDigits: 0,
+    }).format(value);
+  } catch {
+    return `${new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 0 }).format(value)} ${code}`;
+  }
+}
+
+export function formatDateFr(dateStr?: string): string {
+  if (!dateStr) return '—';
+  const parsed = new Date(dateStr.length === 10 ? `${dateStr}T12:00:00` : dateStr);
+  if (Number.isNaN(parsed.getTime())) return dateStr;
+  return new Intl.DateTimeFormat('fr-FR', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(parsed);
+}
+
+export function formatDateTimeFr(dateStr?: string): string {
+  if (!dateStr) return '—';
+  const parsed = new Date(dateStr);
+  if (Number.isNaN(parsed.getTime())) return dateStr;
+  return new Intl.DateTimeFormat('fr-FR', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(parsed);
+}
+
+export function validateProspectInput(input: {
+  firstName: string;
+  lastName: string;
+  primaryEntityId: string;
+  email?: string;
+  estimatedValue?: number;
+}): string | null {
+  if (!input.firstName.trim()) return 'Le prénom est obligatoire.';
+  if (!input.lastName.trim()) return 'Le nom est obligatoire.';
+  if (!input.primaryEntityId.trim()) return "L'entité principale est obligatoire.";
+  if (input.email && input.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email.trim())) {
+    return "L'adresse email est invalide.";
+  }
+  if (input.estimatedValue !== undefined && input.estimatedValue < 0) {
+    return 'La valeur estimée ne peut pas être négative.';
+  }
+  return null;
+}
+
+export function validateActionInput(input: {
+  title: string;
+  prospectId?: string;
+  contactId?: string;
+  companyId?: string;
+  entityId: string;
+  dueDate: string;
+}): string | null {
+  if (!input.title.trim()) return "Le titre de l'action est obligatoire.";
+  if (!input.entityId.trim()) return "L'entité est obligatoire.";
+  if (!input.dueDate.trim()) return "La date d'échéance est obligatoire.";
+  return null;
+}
+
+export function validateDealInput(input: {
+  name: string;
+  entityId: string;
+  prospectId?: string;
+  contactId?: string;
+  stageId: string;
+  amount: number;
+  status?: 'open' | 'won' | 'lost';
+  lostReason?: string;
+  lostComment?: string;
+}): string | null {
+  if (!input.name.trim()) return "Le nom de l'opportunité est obligatoire.";
+  if (!input.entityId.trim()) return "L'entité est obligatoire.";
+  if (!input.prospectId?.trim() && !input.contactId?.trim()) {
+    return 'Le contact ou prospect associé est obligatoire.';
+  }
+  if (!input.stageId.trim()) return "L'étape du pipeline est obligatoire.";
+  if (Number.isNaN(input.amount) || input.amount < 0) return 'Le montant doit être positif.';
+  if (input.status === 'lost') {
+    if (!input.lostReason?.trim()) {
+      return 'Le motif de perte est obligatoire lorsque l’opportunité passe à « Perdu ».';
+    }
+    if (input.lostReason === 'Autre' && !input.lostComment?.trim()) {
+      return 'Un commentaire est obligatoire lorsque le motif de perte est « Autre ».';
+    }
+  }
+  return null;
+}

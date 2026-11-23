@@ -1,0 +1,6 @@
+{
+  "name": "Arena Group CRM",
+  "description": "CRM multi-entités pour Arena Group : gestion des prospects, actions commerciales, pipelines et tableaux de bord pour Arena Business Center, Improveo, Arena Studio Comm et Maison & Artisanat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,1125 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Catch-all deny rule
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers de base ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isBootstrappedSuperAdmin() {
+      return isVerified() && request.auth.token.email == 'navalona.rajaonarivelo@gmail.com';
+    }
+
+    function userDocExists() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function currentUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActiveUser() {
+      return isBootstrappedSuperAdmin() || (userDocExists() && currentUserDoc().active == true);
+    }
+
+    function getUserRole() {
+      return isBootstrappedSuperAdmin() ? 'super_admin' : (userDocExists() ? currentUserDoc().role : 'none');
+    }
+
+    function isSuperAdmin() {
+      return isActiveUser() && getUserRole() == 'super_admin';
+    }
+
+    function isEntityAdmin() {
+      return isActiveUser() && getUserRole() == 'entity_admin';
+    }
+
+    function isManagerOrAbove() {
+      return isActiveUser() && getUserRole() in ['super_admin', 'entity_admin', 'manager'];
+    }
+
+    function canWriteCrmData() {
+      return isVerified() && isActiveUser() && getUserRole() in ['super_admin', 'entity_admin', 'manager', 'sales'];
+    }
+
+    function userEntityIds() {
+      return userDocExists() ? currentUserDoc().entityIds : [];
+    }
+
+    function hasEntityAccess(entityId) {
+      return isSuperAdmin() || (isActiveUser() && entityId in userEntityIds());
+    }
+
+    function hasSharedEntityAccess(sharedIds) {
+      return sharedIds is list && sharedIds.size() > 0 && sharedIds.hasAny(userEntityIds());
+    }
+
+    function isValidString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+
+    function isValidStringList(listVal, maxItems) {
+      return listVal is list && listVal.size() <= maxItems && (listVal.size() == 0 || listVal[0] is string);
+    }
+
+    // --- Validation schémas ---
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'entityIds', 'active', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'role', 'entityIds', 'active', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && isValidString(data.email, 3, 200)
+        && isValidString(data.displayName, 1, 120)
+        && data.role in ['super_admin', 'entity_admin', 'manager', 'sales', 'reader']
+        && isValidStringList(data.entityIds, 10)
+        && data.active is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidEntity(data) {
+      return data.keys().hasAll(['id', 'name', 'slug', 'active', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'slug', 'description', 'logoUrl', 'color', 'active', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidString(data.name, 1, 120)
+        && isValidString(data.slug, 1, 120)
+        && (!('description' in data) || isValidString(data.description, 0, 500))
+        && (!('logoUrl' in data) || isValidString(data.logoUrl, 0, 500))
+        && (!('color' in data) || isValidString(data.color, 0, 20))
+        && data.active is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCompany(data) {
+      return data.keys().hasAll(['id', 'legalName', 'isVip', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'legalName', 'tradeName', 'legalStatus', 'nif', 'stat', 'rcs', 'vatNumber',
+          'address', 'city', 'country', 'phone', 'whatsapp', 'email', 'website',
+          'primaryContactId', 'tags', 'notes', 'isVip', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidString(data.legalName, 1, 200)
+        && (!('tradeName' in data) || isValidString(data.tradeName, 0, 200))
+        && (!('legalStatus' in data) || isValidString(data.legalStatus, 0, 60))
+        && (!('nif' in data) || isValidString(data.nif, 0, 60))
+        && (!('stat' in data) || isValidString(data.stat, 0, 60))
+        && (!('rcs' in data) || isValidString(data.rcs, 0, 60))
+        && (!('vatNumber' in data) || isValidString(data.vatNumber, 0, 60))
+        && (!('address' in data) || isValidString(data.address, 0, 300))
+        && (!('city' in data) || isValidString(data.city, 0, 120))
+        && (!('country' in data) || isValidString(data.country, 0, 120))
+        && (!('phone' in data) || isValidString(data.phone, 0, 40))
+        && (!('whatsapp' in data) || isValidString(data.whatsapp, 0, 40))
+        && (!('email' in data) || isValidString(data.email, 0, 200))
+        && (!('website' in data) || isValidString(data.website, 0, 300))
+        && (!('primaryContactId' in data) || isValidString(data.primaryContactId, 0, 128))
+        && (!('tags' in data) || isValidStringList(data.tags, 20))
+        && (!('notes' in data) || isValidString(data.notes, 0, 5000))
+        && data.isVip is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidContact(data) {
+      return data.keys().hasAll(['id', 'fullName', 'isVip', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'fullName', 'jobTitle', 'phone', 'whatsapp', 'email', 'companyId',
+          'isVip', 'tags', 'consentMarketing', 'gdprConsentDate', 'notes',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidString(data.fullName, 1, 160)
+        && (!('jobTitle' in data) || isValidString(data.jobTitle, 0, 120))
+        && (!('phone' in data) || isValidString(data.phone, 0, 40))
+        && (!('whatsapp' in data) || isValidString(data.whatsapp, 0, 40))
+        && (!('email' in data) || isValidString(data.email, 0, 200))
+        && (!('companyId' in data) || isValidString(data.companyId, 0, 128))
+        && data.isVip is bool
+        && (!('tags' in data) || isValidStringList(data.tags, 20))
+        && (!('consentMarketing' in data) || data.consentMarketing is bool)
+        && (!('gdprConsentDate' in data) || isValidString(data.gdprConsentDate, 0, 40))
+        && (!('notes' in data) || isValidString(data.notes, 0, 5000))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLead(data) {
+      return data.keys().hasAll(['id', 'contactId', 'entityId', 'status', 'assignedToUid', 'priority', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'contactId', 'companyId', 'entityId', 'source', 'status',
+          'assignedToUid', 'priority', 'estimatedValue', 'lastContactAt',
+          'nextFollowUpDate', 'nextFollowUpChannel', 'notes', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.contactId)
+        && (!('companyId' in data) || isValidString(data.companyId, 0, 128))
+        && isValidId(data.entityId)
+        && (!('source' in data) || isValidString(data.source, 0, 120))
+        && data.status in ['Nouveau', 'Contacté', 'Qualifié', 'Non qualifié']
+        && isValidId(data.assignedToUid)
+        && data.priority in ['low', 'medium', 'high', 'urgent']
+        && (!('estimatedValue' in data) || (data.estimatedValue is number && data.estimatedValue >= 0))
+        && (!('lastContactAt' in data) || isValidString(data.lastContactAt, 0, 40))
+        && (!('nextFollowUpDate' in data) || isValidString(data.nextFollowUpDate, 0, 40))
+        && (!('nextFollowUpChannel' in data) || data.nextFollowUpChannel in ['call', 'email', 'whatsapp', 'task'])
+        && (!('notes' in data) || isValidString(data.notes, 0, 3000))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSequence(data) {
+      return data.keys().hasAll(['id', 'name', 'entityId', 'active', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'name', 'entityId', 'description', 'active', 'createdByUid', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidString(data.name, 1, 160)
+        && isValidId(data.entityId)
+        && (!('description' in data) || isValidString(data.description, 0, 1000))
+        && data.active is bool
+        && isValidId(data.createdByUid)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSequenceStep(data) {
+      return data.keys().hasAll(['id', 'sequenceId', 'entityId', 'order', 'channel', 'delayDays', 'title'])
+        && data.keys().hasOnly(['id', 'sequenceId', 'entityId', 'order', 'channel', 'delayDays', 'title', 'description', 'templateId'])
+        && isValidId(data.id)
+        && isValidId(data.sequenceId)
+        && isValidId(data.entityId)
+        && data.order is number && data.order >= 0
+        && data.channel in ['call', 'email', 'whatsapp', 'task']
+        && data.delayDays is number && data.delayDays >= 0
+        && isValidString(data.title, 1, 180)
+        && (!('description' in data) || isValidString(data.description, 0, 2000))
+        && (!('templateId' in data) || isValidString(data.templateId, 0, 128));
+    }
+
+    function isValidSequenceEnrollment(data) {
+      return data.keys().hasAll(['id', 'sequenceId', 'leadId', 'contactId', 'entityId', 'enrolledAt', 'currentStep', 'status', 'nextActionDate', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'sequenceId', 'leadId', 'contactId', 'entityId', 'enrolledAt', 'currentStep', 'status', 'nextActionDate', 'callsMade', 'meetingsBooked', 'repliesReceived', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.sequenceId)
+        && isValidId(data.leadId)
+        && isValidId(data.contactId)
+        && isValidId(data.entityId)
+        && isValidString(data.enrolledAt, 1, 40)
+        && data.currentStep is number && data.currentStep >= 0
+        && data.status in ['active', 'completed', 'paused', 'cancelled']
+        && isValidString(data.nextActionDate, 0, 40)
+        && (!('callsMade' in data) || (data.callsMade is number && data.callsMade >= 0))
+        && (!('meetingsBooked' in data) || (data.meetingsBooked is number && data.meetingsBooked >= 0))
+        && (!('repliesReceived' in data) || (data.repliesReceived is number && data.repliesReceived >= 0))
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidProduct(data) {
+      return data.keys().hasAll(['id', 'name', 'category', 'price', 'currency', 'unit', 'vatRate', 'active', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'sku', 'name', 'description', 'folder', 'category', 'customProperties',
+          'price', 'unitCost', 'pricingType', 'pricingTiers',
+          'billingFrequency', 'billingDurationCount', 'billingDurationUnit',
+          'currency', 'unit', 'vatRate', 'imageUrl', 'productUrl',
+          'active', 'entityIds', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && (!('sku' in data) || isValidString(data.sku, 1, 80))
+        && isValidString(data.name, 1, 180)
+        && (!('description' in data) || isValidString(data.description, 0, 2000))
+        && (!('folder' in data) || isValidString(data.folder, 0, 120))
+        && isValidString(data.category, 1, 100)
+        && (!('customProperties' in data) || (data.customProperties is list && data.customProperties.size() <= 20))
+        && data.price is number && data.price >= 0
+        && (!('unitCost' in data) || (data.unitCost is number && data.unitCost >= 0))
+        && (!('pricingType' in data) || data.pricingType in ['fixed', 'tiered'])
+        && (!('pricingTiers' in data) || (data.pricingTiers is list && data.pricingTiers.size() <= 20))
+        && (!('billingFrequency' in data) || data.billingFrequency in ['one_time', 'weekly', 'monthly', 'quarterly', 'annual'])
+        && (!('billingDurationCount' in data) || data.billingDurationCount == null || (data.billingDurationCount is number && data.billingDurationCount >= 0))
+        && (!('billingDurationUnit' in data) || data.billingDurationUnit in ['weeks', 'months', 'years', 'unlimited'])
+        && isValidString(data.currency, 1, 10)
+        && isValidString(data.unit, 1, 40)
+        && data.vatRate is number && data.vatRate >= 0 && data.vatRate <= 100
+        && (!('imageUrl' in data) || isValidString(data.imageUrl, 0, 500))
+        && (!('productUrl' in data) || isValidString(data.productUrl, 0, 500))
+        && data.active is bool
+        && (!('entityIds' in data) || isValidStringList(data.entityIds, 10))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidProspect(data) {
+      return data.keys().hasAll(['id', 'primaryEntityId', 'firstName', 'lastName', 'status', 'ownerUid', 'priority', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'primaryEntityId', 'sharedEntityIds', 'contactId', 'companyId', 'firstName', 'lastName', 'companyName',
+          'email', 'phone', 'mobile', 'website', 'status', 'source', 'ownerUid', 'tags',
+          'notes', 'priority', 'estimatedValue', 'address', 'city', 'country',
+          'consentMarketing', 'gdprConsentDate', 'archived', 'lastActivityAt',
+          'nextActionDate', 'nextActionType', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.primaryEntityId)
+        && (!('sharedEntityIds' in data) || isValidStringList(data.sharedEntityIds, 4))
+        && (!('contactId' in data) || isValidString(data.contactId, 0, 128))
+        && (!('companyId' in data) || isValidString(data.companyId, 0, 128))
+        && isValidString(data.firstName, 1, 100)
+        && isValidString(data.lastName, 1, 100)
+        && (!('companyName' in data) || isValidString(data.companyName, 0, 160))
+        && (!('email' in data) || isValidString(data.email, 0, 200))
+        && (!('phone' in data) || isValidString(data.phone, 0, 40))
+        && (!('mobile' in data) || isValidString(data.mobile, 0, 40))
+        && (!('website' in data) || isValidString(data.website, 0, 300))
+        && data.status in ['Nouveau', 'Contacté', 'Qualifié', 'Rendez-vous pris', 'Proposition envoyée', 'Négociation', 'Gagné', 'Perdu', 'Sans réponse', 'À recontacter']
+        && (!('source' in data) || isValidString(data.source, 0, 100))
+        && isValidId(data.ownerUid)
+        && (!('tags' in data) || isValidStringList(data.tags, 15))
+        && (!('notes' in data) || isValidString(data.notes, 0, 5000))
+        && data.priority in ['low', 'medium', 'high', 'urgent']
+        && (!('estimatedValue' in data) || (data.estimatedValue is number && data.estimatedValue >= 0))
+        && (!('address' in data) || isValidString(data.address, 0, 300))
+        && (!('city' in data) || isValidString(data.city, 0, 120))
+        && (!('country' in data) || isValidString(data.country, 0, 120))
+        && (!('consentMarketing' in data) || data.consentMarketing is bool)
+        && (!('gdprConsentDate' in data) || isValidString(data.gdprConsentDate, 0, 40))
+        && (!('archived' in data) || data.archived is bool)
+        && (!('lastActivityAt' in data) || data.lastActivityAt is timestamp)
+        && (!('nextActionDate' in data) || isValidString(data.nextActionDate, 0, 40))
+        && (!('nextActionType' in data) || isValidString(data.nextActionType, 0, 60))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAction(data) {
+      return data.keys().hasAll(['id', 'entityId', 'type', 'title', 'assignedToUid', 'createdByUid', 'status', 'dueDate', 'priority', 'relatedEntityType', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'entityId', 'prospectId', 'contactId', 'companyId', 'dealId', 'type', 'title', 'description',
+          'assignedToUid', 'createdByUid', 'status', 'dueDate', 'dueTime', 'completedAt',
+          'priority', 'outcome', 'durationMinutes', 'reminderBeforeMinutes', 'outlookEventId',
+          'relatedEntityType', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.entityId)
+        && (!('prospectId' in data) || isValidString(data.prospectId, 0, 128))
+        && (!('contactId' in data) || isValidString(data.contactId, 0, 128))
+        && (!('companyId' in data) || isValidString(data.companyId, 0, 128))
+        && (!('dealId' in data) || isValidString(data.dealId, 0, 128))
+        && data.type in ['Appel', 'Email', 'Réunion', 'Message WhatsApp', 'Note', 'Tâche', 'Rendez-vous', 'Relance', 'Envoi de devis', 'Suivi dossier', 'Autre']
+        && isValidString(data.title, 1, 200)
+        && (!('description' in data) || isValidString(data.description, 0, 3000))
+        && isValidId(data.assignedToUid)
+        && isValidId(data.createdByUid)
+        && data.status in ['planned', 'done', 'cancelled', 'late']
+        && isValidString(data.dueDate, 1, 40)
+        && (!('dueTime' in data) || isValidString(data.dueTime, 0, 20))
+        && (!('completedAt' in data) || isValidString(data.completedAt, 0, 40))
+        && data.priority in ['low', 'medium', 'high', 'urgent']
+        && (!('outcome' in data) || isValidString(data.outcome, 0, 500))
+        && (!('durationMinutes' in data) || (data.durationMinutes is number && data.durationMinutes >= 0))
+        && (!('reminderBeforeMinutes' in data) || (data.reminderBeforeMinutes is number && data.reminderBeforeMinutes >= 0))
+        && (!('outlookEventId' in data) || isValidString(data.outlookEventId, 0, 200))
+        && data.relatedEntityType in ['prospect', 'deal', 'contact', 'company', 'quote', 'invoice']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidOpportunity(data) {
+      return data.keys().hasAll(['id', 'entityId', 'name', 'stageId', 'pipelineId', 'amount', 'currency', 'probability', 'ownerUid', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'entityId', 'prospectId', 'contactId', 'companyId', 'name', 'stage', 'stageId', 'pipelineId',
+          'amount', 'currency', 'probability', 'expectedCloseDate', 'serviceConcerned', 'productId',
+          'ownerUid', 'status', 'lostReason', 'lostComment', 'notes', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.entityId)
+        && (!('prospectId' in data) || isValidString(data.prospectId, 0, 128))
+        && (!('contactId' in data) || isValidString(data.contactId, 0, 128))
+        && (!('companyId' in data) || isValidString(data.companyId, 0, 128))
+        && isValidString(data.name, 1, 200)
+        && (!('stage' in data) || data.stage in ['Prospect', 'Qualification', 'Proposition', 'Négociation', 'Gagné', 'Perdu'])
+        && isValidId(data.stageId)
+        && isValidId(data.pipelineId)
+        && data.amount is number && data.amount >= 0
+        && isValidString(data.currency, 1, 10)
+        && data.probability is number && data.probability >= 0 && data.probability <= 100
+        && (!('expectedCloseDate' in data) || isValidString(data.expectedCloseDate, 0, 40))
+        && (!('serviceConcerned' in data) || isValidString(data.serviceConcerned, 0, 160))
+        && (!('productId' in data) || isValidString(data.productId, 0, 128))
+        && isValidId(data.ownerUid)
+        && data.status in ['open', 'won', 'lost']
+        && (!('lostReason' in data) || data.lostReason in ['Prix', 'Concurrent', 'Timing', 'Pas de budget', 'Autre', ''])
+        && (!('lostComment' in data) || isValidString(data.lostComment, 0, 1000))
+        && (data.status != 'lost' || (
+          'lostReason' in data && data.lostReason in ['Prix', 'Concurrent', 'Timing', 'Pas de budget', 'Autre'] &&
+          (data.lostReason != 'Autre' || ('lostComment' in data && isValidString(data.lostComment, 1, 1000)))
+        ))
+        && (!('notes' in data) || isValidString(data.notes, 0, 3000))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidQuote(data) {
+      return data.keys().hasAll(['id', 'entityId', 'contactId', 'quoteNumber', 'status', 'issueDate', 'validUntil', 'currency', 'subtotal', 'vatAmount', 'total', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'entityId', 'contactId', 'companyId', 'opportunityId', 'quoteNumber', 'status',
+          'issueDate', 'validUntil', 'currency', 'subtotal', 'vatAmount', 'total', 'notes',
+          'legalMentions', 'showEuroConversion', 'euroExchangeRate', 'euroBankName', 'euroRateDate',
+          'createdByUid', 'pdfUrl', 'acceptedAt', 'refusedAt',
+          'convertedInvoiceId', 'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.entityId)
+        && isValidId(data.contactId)
+        && (!('companyId' in data) || isValidString(data.companyId, 0, 128))
+        && (!('opportunityId' in data) || isValidString(data.opportunityId, 0, 128))
+        && isValidString(data.quoteNumber, 3, 60)
+        && data.status in ['Brouillon', 'Envoyé', 'Accepté', 'Refusé', 'Expiré', 'Converti en facture']
+        && isValidString(data.issueDate, 1, 40)
+        && isValidString(data.validUntil, 1, 40)
+        && isValidString(data.currency, 1, 10)
+        && data.subtotal is number && data.subtotal >= 0
+        && data.vatAmount is number && data.vatAmount >= 0
+        && data.total is number && data.total >= 0
+        && (!('notes' in data) || isValidString(data.notes, 0, 3000))
+        && (!('legalMentions' in data) || isValidString(data.legalMentions, 0, 3000))
+        && (!('showEuroConversion' in data) || data.showEuroConversion is bool)
+        && (!('euroExchangeRate' in data) || (data.euroExchangeRate is number && data.euroExchangeRate > 0))
+        && (!('euroBankName' in data) || isValidString(data.euroBankName, 0, 120))
+        && (!('euroRateDate' in data) || isValidString(data.euroRateDate, 0, 40))
+        && isValidId(data.createdByUid)
+        && (!('pdfUrl' in data) || isValidString(data.pdfUrl, 0, 500))
+        && (!('acceptedAt' in data) || isValidString(data.acceptedAt, 0, 40))
+        && (!('refusedAt' in data) || isValidString(data.refusedAt, 0, 40))
+        && (!('convertedInvoiceId' in data) || isValidString(data.convertedInvoiceId, 0, 128))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidQuoteItem(data) {
+      return data.keys().hasAll(['id', 'quoteId', 'entityId', 'label', 'quantity', 'unitPrice', 'vatRate', 'lineTotal', 'orderIndex'])
+        && data.keys().hasOnly(['id', 'quoteId', 'entityId', 'productId', 'label', 'description', 'quantity', 'unitPrice', 'vatRate', 'lineTotal', 'orderIndex'])
+        && isValidId(data.id)
+        && isValidId(data.quoteId)
+        && isValidId(data.entityId)
+        && (!('productId' in data) || isValidString(data.productId, 0, 128))
+        && isValidString(data.label, 1, 200)
+        && (!('description' in data) || isValidString(data.description, 0, 1000))
+        && data.quantity is number && data.quantity >= 0
+        && data.unitPrice is number && data.unitPrice >= 0
+        && data.vatRate is number && data.vatRate >= 0
+        && data.lineTotal is number && data.lineTotal >= 0
+        && data.orderIndex is number && data.orderIndex >= 0;
+    }
+
+    function isValidInvoice(data) {
+      return data.keys().hasAll(['id', 'entityId', 'contactId', 'invoiceNumber', 'status', 'issueDate', 'dueDate', 'currency', 'subtotal', 'vatAmount', 'total', 'paidAmount', 'remainingAmount', 'createdByUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'entityId', 'contactId', 'companyId', 'quoteId', 'invoiceNumber',
+          'invoiceType', 'depositPercentage', 'deductedDepositInvoiceId', 'deductedDepositAmount',
+          'status', 'approvalStatus', 'submittedForApprovalAt', 'submittedByUid', 'submittedByName',
+          'approvedByUid', 'approvedByName', 'approvedAt',
+          'rejectedByUid', 'rejectedByName', 'rejectedAt', 'rejectedReason',
+          'showEuroConversion', 'euroExchangeRate', 'euroBankName', 'euroRateDate',
+          'issueDate', 'dueDate', 'currency', 'subtotal', 'vatAmount', 'total',
+          'paidAmount', 'remainingAmount', 'legalMentions', 'notes', 'createdByUid', 'pdfUrl',
+          'createdAt', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.entityId)
+        && isValidId(data.contactId)
+        && (!('companyId' in data) || isValidString(data.companyId, 0, 128))
+        && (!('quoteId' in data) || isValidString(data.quoteId, 0, 128))
+        && isValidString(data.invoiceNumber, 3, 60)
+        && (!('invoiceType' in data) || data.invoiceType in ['standard', 'deposit'])
+        && (!('depositPercentage' in data) || (data.depositPercentage is number && data.depositPercentage > 0 && data.depositPercentage <= 100))
+        && (!('deductedDepositInvoiceId' in data) || isValidString(data.deductedDepositInvoiceId, 0, 128))
+        && (!('deductedDepositAmount' in data) || (data.deductedDepositAmount is number && data.deductedDepositAmount >= 0))
+        && data.status in ['Brouillon', 'Émise', 'Payée partiellement', 'Payée', 'En retard', 'Annulée']
+        && (!('approvalStatus' in data) || data.approvalStatus in ['pending_approval', 'approved', 'rejected'])
+        && (!('submittedForApprovalAt' in data) || isValidString(data.submittedForApprovalAt, 0, 40))
+        && (!('submittedByUid' in data) || isValidString(data.submittedByUid, 0, 128))
+        && (!('submittedByName' in data) || isValidString(data.submittedByName, 0, 120))
+        && (!('approvedByUid' in data) || isValidString(data.approvedByUid, 0, 128))
+        && (!('approvedByName' in data) || isValidString(data.approvedByName, 0, 120))
+        && (!('approvedAt' in data) || isValidString(data.approvedAt, 0, 40))
+        && (!('rejectedByUid' in data) || isValidString(data.rejectedByUid, 0, 128))
+        && (!('rejectedByName' in data) || isValidString(data.rejectedByName, 0, 120))
+        && (!('rejectedAt' in data) || isValidString(data.rejectedAt, 0, 40))
+        && (!('rejectedReason' in data) || isValidString(data.rejectedReason, 0, 500))
+        && (!('showEuroConversion' in data) || data.showEuroConversion is bool)
+        && (!('euroExchangeRate' in data) || (data.euroExchangeRate is number && data.euroExchangeRate > 0))
+        && (!('euroBankName' in data) || isValidString(data.euroBankName, 0, 120))
+        && (!('euroRateDate' in data) || isValidString(data.euroRateDate, 0, 40))
+        && isValidString(data.issueDate, 1, 40)
+        && isValidString(data.dueDate, 1, 40)
+        && isValidString(data.currency, 1, 10)
+        && data.subtotal is number && data.subtotal >= 0
+        && data.vatAmount is number && data.vatAmount >= 0
+        && data.total is number && data.total >= 0
+        && data.paidAmount is number && data.paidAmount >= 0
+        && data.remainingAmount is number && data.remainingAmount >= 0
+        && (!('legalMentions' in data) || isValidString(data.legalMentions, 0, 3000))
+        && (!('notes' in data) || isValidString(data.notes, 0, 3000))
+        && isValidId(data.createdByUid)
+        && (!('pdfUrl' in data) || isValidString(data.pdfUrl, 0, 500))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidInvoiceItem(data) {
+      return data.keys().hasAll(['id', 'invoiceId', 'entityId', 'label', 'quantity', 'unitPrice', 'vatRate', 'lineTotal', 'orderIndex'])
+        && data.keys().hasOnly(['id', 'invoiceId', 'entityId', 'productId', 'label', 'description', 'quantity', 'unitPrice', 'vatRate', 'lineTotal', 'orderIndex'])
+        && isValidId(data.id)
+        && isValidId(data.invoiceId)
+        && isValidId(data.entityId)
+        && (!('productId' in data) || isValidString(data.productId, 0, 128))
+        && isValidString(data.label, 1, 200)
+        && (!('description' in data) || isValidString(data.description, 0, 1000))
+        && data.quantity is number && data.quantity >= 0
+        && data.unitPrice is number && data.unitPrice >= 0
+        && data.vatRate is number && data.vatRate >= 0
+        && data.lineTotal is number && data.lineTotal >= 0
+        && data.orderIndex is number && data.orderIndex >= 0;
+    }
+
+    function isValidPayment(data) {
+      return data.keys().hasAll(['id', 'invoiceId', 'entityId', 'amount', 'paymentDate', 'paymentMethod', 'recordedByUid', 'createdAt'])
+        && data.keys().hasOnly(['id', 'invoiceId', 'entityId', 'amount', 'paymentDate', 'paymentMethod', 'reference', 'recordedByUid', 'notes', 'createdAt'])
+        && isValidId(data.id)
+        && isValidId(data.invoiceId)
+        && isValidId(data.entityId)
+        && data.amount is number && data.amount > 0
+        && isValidString(data.paymentDate, 1, 40)
+        && data.paymentMethod in ['Espèces', 'Virement', 'Chèque', 'Carte', 'Mobile Money', 'Autre']
+        && (!('reference' in data) || isValidString(data.reference, 0, 120))
+        && isValidId(data.recordedByUid)
+        && (!('notes' in data) || isValidString(data.notes, 0, 1000))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidComplaint(data) {
+      return data.keys().hasAll(['id', 'entityId', 'contactId', 'subject', 'status', 'priority', 'assignedToUid', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'entityId', 'contactId', 'companyId', 'subject', 'description', 'status', 'priority', 'assignedToUid', 'resolution', 'resolvedAt', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.entityId)
+        && isValidId(data.contactId)
+        && (!('companyId' in data) || isValidString(data.companyId, 0, 128))
+        && isValidString(data.subject, 1, 200)
+        && (!('description' in data) || isValidString(data.description, 0, 3000))
+        && data.status in ['Nouvelle', 'En cours', 'Résolue', 'Clôturée']
+        && data.priority in ['low', 'medium', 'high', 'urgent']
+        && isValidId(data.assignedToUid)
+        && (!('resolution' in data) || isValidString(data.resolution, 0, 2000))
+        && (!('resolvedAt' in data) || isValidString(data.resolvedAt, 0, 40))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidServiceRequest(data) {
+      return data.keys().hasAll(['id', 'entityId', 'contactId', 'subject', 'status', 'priority', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'entityId', 'contactId', 'companyId', 'subject', 'description', 'status', 'priority', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.entityId)
+        && isValidId(data.contactId)
+        && (!('companyId' in data) || isValidString(data.companyId, 0, 128))
+        && isValidString(data.subject, 1, 200)
+        && (!('description' in data) || isValidString(data.description, 0, 3000))
+        && data.status in ['Ouverte', 'En traitement', 'Traitée', 'Fermée']
+        && data.priority in ['low', 'medium', 'high', 'urgent']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidSatisfactionSurvey(data) {
+      return data.keys().hasAll(['id', 'entityId', 'contactId', 'rating', 'surveySentAt', 'createdAt'])
+        && data.keys().hasOnly(['id', 'entityId', 'contactId', 'companyId', 'opportunityId', 'rating', 'comment', 'surveySentAt', 'answeredAt', 'createdAt'])
+        && isValidId(data.id)
+        && isValidId(data.entityId)
+        && isValidId(data.contactId)
+        && (!('companyId' in data) || isValidString(data.companyId, 0, 128))
+        && (!('opportunityId' in data) || isValidString(data.opportunityId, 0, 128))
+        && data.rating is number && data.rating >= 0 && data.rating <= 5
+        && (!('comment' in data) || isValidString(data.comment, 0, 2000))
+        && isValidString(data.surveySentAt, 1, 40)
+        && (!('answeredAt' in data) || isValidString(data.answeredAt, 0, 40))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidIntegration(data) {
+      return data.keys().hasAll(['id', 'provider', 'entityId', 'enabled', 'syncEmails', 'syncCalendar', 'status', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'provider', 'entityId', 'enabled', 'tenantId', 'clientId', 'accountEmail', 'businessPhoneNumber', 'syncEmails', 'syncCalendar', 'status', 'lastSyncAt', 'updatedAt'])
+        && isValidId(data.id)
+        && data.provider in ['outlook', 'whatsapp']
+        && isValidId(data.entityId)
+        && data.enabled is bool
+        && (!('tenantId' in data) || isValidString(data.tenantId, 0, 120))
+        && (!('clientId' in data) || isValidString(data.clientId, 0, 120))
+        && (!('accountEmail' in data) || isValidString(data.accountEmail, 0, 200))
+        && (!('businessPhoneNumber' in data) || isValidString(data.businessPhoneNumber, 0, 40))
+        && data.syncEmails is bool
+        && data.syncCalendar is bool
+        && data.status in ['disconnected', 'ready', 'connected']
+        && (!('lastSyncAt' in data) || isValidString(data.lastSyncAt, 0, 40))
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNumberingCounter(data) {
+      return data.keys().hasAll(['id', 'prefix', 'entityId', 'entityCode', 'year', 'lastSequence', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'prefix', 'entityId', 'entityCode', 'year', 'lastSequence', 'updatedAt'])
+        && isValidId(data.id)
+        && data.prefix in ['DEV', 'FAC']
+        && isValidId(data.entityId)
+        && isValidString(data.entityCode, 1, 16)
+        && data.year is number && data.year >= 2020
+        && data.lastSequence is number && data.lastSequence >= 1
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLegalSetting(data) {
+      return data.keys().hasAll(['id', 'entityId', 'entityCode', 'legalName', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'entityId', 'entityCode', 'legalName', 'nif', 'stat', 'rcs', 'vatNumber',
+          'address', 'phone', 'email', 'paymentTerms', 'defaultLegalMentions',
+          'bankAccountHolder', 'bankName', 'bankAddress', 'iban', 'bic',
+          'signatureImageUrl', 'stampImageUrl', 'updatedAt'
+        ])
+        && isValidId(data.id)
+        && isValidId(data.entityId)
+        && isValidString(data.entityCode, 1, 16)
+        && isValidString(data.legalName, 1, 200)
+        && (!('nif' in data) || isValidString(data.nif, 0, 60))
+        && (!('stat' in data) || isValidString(data.stat, 0, 60))
+        && (!('rcs' in data) || isValidString(data.rcs, 0, 60))
+        && (!('vatNumber' in data) || isValidString(data.vatNumber, 0, 60))
+        && (!('address' in data) || isValidString(data.address, 0, 300))
+        && (!('phone' in data) || isValidString(data.phone, 0, 60))
+        && (!('email' in data) || isValidString(data.email, 0, 200))
+        && (!('paymentTerms' in data) || isValidString(data.paymentTerms, 0, 500))
+        && (!('defaultLegalMentions' in data) || isValidString(data.defaultLegalMentions, 0, 2000))
+        && (!('bankAccountHolder' in data) || isValidString(data.bankAccountHolder, 0, 200))
+        && (!('bankName' in data) || isValidString(data.bankName, 0, 160))
+        && (!('bankAddress' in data) || isValidString(data.bankAddress, 0, 300))
+        && (!('iban' in data) || isValidString(data.iban, 0, 80))
+        && (!('bic' in data) || isValidString(data.bic, 0, 40))
+        && (!('signatureImageUrl' in data) || isValidString(data.signatureImageUrl, 0, 250000))
+        && (!('stampImageUrl' in data) || isValidString(data.stampImageUrl, 0, 250000))
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPipeline(data) {
+      return data.keys().hasAll(['id', 'entityId', 'name', 'isDefault', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'entityId', 'name', 'isDefault', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.entityId)
+        && isValidString(data.name, 1, 140)
+        && data.isDefault is bool
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPipelineStage(data) {
+      return data.keys().hasAll(['id', 'pipelineId', 'entityId', 'name', 'order', 'probability', 'outcomeType', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'pipelineId', 'entityId', 'name', 'order', 'probability', 'color', 'outcomeType', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.pipelineId)
+        && isValidId(data.entityId)
+        && isValidString(data.name, 1, 100)
+        && data.order is number && data.order >= 0
+        && data.probability is number && data.probability >= 0 && data.probability <= 100
+        && (!('color' in data) || isValidString(data.color, 0, 20))
+        && data.outcomeType in ['open', 'won', 'lost']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTag(data) {
+      return data.keys().hasAll(['id', 'entityId', 'name', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'entityId', 'name', 'color', 'createdAt', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.entityId)
+        && isValidString(data.name, 1, 60)
+        && (!('color' in data) || isValidString(data.color, 0, 20))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return data.keys().hasAll(['id', 'entityId', 'actorUid', 'actionType', 'targetType', 'targetId', 'summary', 'createdAt'])
+        && data.keys().hasOnly(['id', 'entityId', 'actorUid', 'actorName', 'actionType', 'targetType', 'targetId', 'summary', 'createdAt'])
+        && isValidId(data.id)
+        && isValidId(data.entityId)
+        && isValidId(data.actorUid)
+        && (!('actorName' in data) || isValidString(data.actorName, 0, 120))
+        && isValidString(data.actionType, 1, 60)
+        && isValidString(data.targetType, 1, 60)
+        && isValidString(data.targetId, 1, 128)
+        && isValidString(data.summary, 1, 500)
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSetting(data) {
+      return data.keys().hasAll(['id', 'scope', 'defaultCurrency', 'defaultProspectView', 'updatedByUid', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'scope', 'defaultCurrency', 'defaultProspectView', 'updatedByUid', 'updatedAt'])
+        && isValidId(data.id)
+        && isValidId(data.scope)
+        && isValidString(data.defaultCurrency, 1, 10)
+        && data.defaultProspectView in ['table', 'cards']
+        && isValidId(data.updatedByUid)
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidNotification(data) {
+      return data.keys().hasAll(['id', 'type', 'entityId', 'invoiceId', 'invoiceNumber', 'title', 'message', 'actorUid', 'recipientRoles', 'readByUids', 'createdAt'])
+        && data.keys().hasOnly(['id', 'type', 'entityId', 'invoiceId', 'invoiceNumber', 'title', 'message', 'actorUid', 'actorName', 'recipientRoles', 'targetUserUid', 'readByUids', 'createdAt'])
+        && isValidId(data.id)
+        && data.type in ['invoice_validation_requested', 'invoice_validated', 'invoice_rejected']
+        && isValidId(data.entityId)
+        && isValidId(data.invoiceId)
+        && isValidString(data.invoiceNumber, 1, 60)
+        && isValidString(data.title, 1, 200)
+        && isValidString(data.message, 1, 600)
+        && isValidId(data.actorUid)
+        && (!('actorName' in data) || isValidString(data.actorName, 0, 120))
+        && isValidStringList(data.recipientRoles, 10)
+        && (!('targetUserUid' in data) || isValidString(data.targetUserUid, 0, 128))
+        && isValidStringList(data.readByUids, 100)
+        && data.createdAt is timestamp;
+    }
+
+    // --- Collection: users ---
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && (
+        request.auth.uid == userId ||
+        isSuperAdmin() ||
+        (isEntityAdmin() && resource.data.entityIds.hasAny(userEntityIds()))
+      );
+      allow list: if isSignedIn() && (
+        resource.data.uid == request.auth.uid ||
+        isSuperAdmin()
+      );
+      allow create: if isVerified() && isValidId(userId) && isValidUser(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isSuperAdmin() ||
+          (request.auth.uid == userId && incoming().uid == request.auth.uid && incoming().role == 'reader' && incoming().entityIds.size() == 0 && incoming().active == true)
+        );
+      allow update: if isVerified() && isValidId(userId) && isValidUser(incoming())
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isSuperAdmin() ||
+          (isEntityAdmin() && existing().role != 'super_admin' && incoming().role in ['entity_admin', 'manager', 'sales', 'reader'] && incoming().entityIds.hasOnly(userEntityIds())) ||
+          (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt']))
+        );
+      allow delete: if isSuperAdmin() && isValidId(userId);
+    }
+
+    // --- Collection: entities ---
+    match /entities/{entityId} {
+      allow get: if isActiveUser() && isValidId(entityId) && (isSuperAdmin() || entityId in userEntityIds());
+      allow list: if isActiveUser() && resource.data.active == true;
+      allow create: if isSuperAdmin() && isValidId(entityId) && isValidEntity(incoming())
+        && incoming().id == entityId && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isSuperAdmin() && isValidId(entityId) && isValidEntity(incoming())
+        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isSuperAdmin() && isValidId(entityId);
+    }
+
+    // --- Collections partagées inter-entités : companies & contacts ---
+    match /companies/{companyId} {
+      allow get: if isActiveUser() && isValidId(companyId) && (isSuperAdmin() || userEntityIds().size() > 0);
+      allow list: if isActiveUser() && resource.data.id is string && (isBootstrappedSuperAdmin() || userEntityIds().size() > 0);
+      allow create: if canWriteCrmData() && isValidId(companyId) && isValidCompany(incoming())
+        && incoming().id == companyId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if canWriteCrmData() && isValidId(companyId) && isValidCompany(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isManagerOrAbove() && isValidId(companyId);
+    }
+
+    match /contacts/{contactId} {
+      allow get: if isActiveUser() && isValidId(contactId) && (isSuperAdmin() || userEntityIds().size() > 0);
+      allow list: if isActiveUser() && resource.data.id is string && (isBootstrappedSuperAdmin() || userEntityIds().size() > 0);
+      allow create: if canWriteCrmData() && isValidId(contactId) && isValidContact(incoming())
+        && incoming().id == contactId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if canWriteCrmData() && isValidId(contactId) && isValidContact(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time;
+      allow delete: if isManagerOrAbove() && isValidId(contactId);
+    }
+
+    // --- Prospection & Séquences de relance (par entité) ---
+    match /leads/{leadId} {
+      allow get: if isActiveUser() && isValidId(leadId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(leadId) && isValidLead(incoming())
+        && incoming().id == leadId && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow update: if canWriteCrmData() && isValidId(leadId) && isValidLead(incoming())
+        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time
+        && hasEntityAccess(existing().entityId);
+      allow delete: if isManagerOrAbove() && isValidId(leadId) && hasEntityAccess(existing().entityId);
+    }
+
+    match /sequences/{sequenceId} {
+      allow get: if isActiveUser() && isValidId(sequenceId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(sequenceId) && isValidSequence(incoming())
+        && incoming().id == sequenceId && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow update: if canWriteCrmData() && isValidId(sequenceId) && isValidSequence(incoming())
+        && incoming().id == existing().id && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time
+        && hasEntityAccess(existing().entityId);
+      allow delete: if isManagerOrAbove() && isValidId(sequenceId) && hasEntityAccess(existing().entityId);
+    }
+
+    match /sequenceSteps/{stepId} {
+      allow get: if isActiveUser() && isValidId(stepId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(stepId) && isValidSequenceStep(incoming())
+        && incoming().id == stepId && hasEntityAccess(incoming().entityId);
+      allow update: if canWriteCrmData() && isValidId(stepId) && isValidSequenceStep(incoming())
+        && incoming().id == existing().id && hasEntityAccess(existing().entityId);
+      allow delete: if isManagerOrAbove() && isValidId(stepId) && hasEntityAccess(existing().entityId);
+    }
+
+    match /sequenceEnrollments/{enrollmentId} {
+      allow get: if isActiveUser() && isValidId(enrollmentId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(enrollmentId) && isValidSequenceEnrollment(incoming())
+        && incoming().id == enrollmentId && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow update: if canWriteCrmData() && isValidId(enrollmentId) && isValidSequenceEnrollment(incoming())
+        && incoming().id == existing().id && incoming().updatedAt == request.time
+        && hasEntityAccess(existing().entityId);
+      allow delete: if isManagerOrAbove() && isValidId(enrollmentId) && hasEntityAccess(existing().entityId);
+    }
+
+    // --- Catalogue produits & services ---
+    match /products/{productId} {
+      allow get: if isActiveUser() && isValidId(productId);
+      allow list: if isActiveUser() && (resource.data.active == true || isBootstrappedSuperAdmin() || isManagerOrAbove());
+      allow create: if isManagerOrAbove() && isValidId(productId) && isValidProduct(incoming())
+        && incoming().id == productId && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isManagerOrAbove() && isValidId(productId) && isValidProduct(incoming())
+        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isSuperAdmin() && isValidId(productId);
+    }
+
+    // --- Collection: prospects ---
+    match /prospects/{prospectId} {
+      allow get: if isActiveUser() && isValidId(prospectId) && (
+        hasEntityAccess(existing().primaryEntityId) ||
+        hasSharedEntityAccess(existing().get('sharedEntityIds', [])) ||
+        existing().ownerUid == request.auth.uid
+      );
+      allow list: if isActiveUser() && (
+        resource.data.ownerUid == request.auth.uid ||
+        resource.data.primaryEntityId in userEntityIds() ||
+        isBootstrappedSuperAdmin()
+      );
+      allow create: if canWriteCrmData() && isValidId(prospectId) && isValidProspect(incoming())
+        && incoming().id == prospectId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().primaryEntityId)
+        && (isManagerOrAbove() || incoming().ownerUid == request.auth.uid);
+      allow update: if canWriteCrmData() && isValidId(prospectId) && isValidProspect(incoming())
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (hasEntityAccess(existing().primaryEntityId) || hasSharedEntityAccess(existing().get('sharedEntityIds', [])));
+      allow delete: if isManagerOrAbove() && isValidId(prospectId) && hasEntityAccess(existing().primaryEntityId);
+    }
+
+    // --- Collection: actions ---
+    match /actions/{actionId} {
+      allow get: if isActiveUser() && isValidId(actionId) && (
+        hasEntityAccess(existing().entityId) ||
+        existing().assignedToUid == request.auth.uid
+      );
+      allow list: if isActiveUser() && (
+        resource.data.assignedToUid == request.auth.uid ||
+        resource.data.createdByUid == request.auth.uid ||
+        resource.data.entityId in userEntityIds() ||
+        isBootstrappedSuperAdmin()
+      );
+      allow create: if canWriteCrmData() && isValidId(actionId) && isValidAction(incoming())
+        && incoming().id == actionId
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow update: if canWriteCrmData() && isValidId(actionId) && isValidAction(incoming())
+        && incoming().id == existing().id
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && hasEntityAccess(existing().entityId);
+      allow delete: if isManagerOrAbove() && isValidId(actionId) && hasEntityAccess(existing().entityId);
+    }
+
+    // --- Collections: deals & opportunities ---
+    match /deals/{dealId} {
+      allow get: if isActiveUser() && isValidId(dealId) && (hasEntityAccess(existing().entityId) || existing().ownerUid == request.auth.uid);
+      allow list: if isActiveUser() && (resource.data.ownerUid == request.auth.uid || resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(dealId) && isValidOpportunity(incoming())
+        && incoming().id == dealId && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId) && (isManagerOrAbove() || incoming().ownerUid == request.auth.uid);
+      allow update: if canWriteCrmData() && isValidId(dealId) && isValidOpportunity(incoming())
+        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time
+        && hasEntityAccess(existing().entityId);
+      allow delete: if isManagerOrAbove() && isValidId(dealId) && hasEntityAccess(existing().entityId);
+    }
+
+    match /opportunities/{opportunityId} {
+      allow get: if isActiveUser() && isValidId(opportunityId) && (hasEntityAccess(existing().entityId) || existing().ownerUid == request.auth.uid);
+      allow list: if isActiveUser() && (resource.data.ownerUid == request.auth.uid || resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(opportunityId) && isValidOpportunity(incoming())
+        && incoming().id == opportunityId && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId) && (isManagerOrAbove() || incoming().ownerUid == request.auth.uid);
+      allow update: if canWriteCrmData() && isValidId(opportunityId) && isValidOpportunity(incoming())
+        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time
+        && hasEntityAccess(existing().entityId);
+      allow delete: if isManagerOrAbove() && isValidId(opportunityId) && hasEntityAccess(existing().entityId);
+    }
+
+    // --- Facturation, Devis & Paiements (par entité) ---
+    match /quotes/{quoteId} {
+      allow get: if isActiveUser() && isValidId(quoteId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(quoteId) && isValidQuote(incoming())
+        && incoming().id == quoteId && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow update: if canWriteCrmData() && isValidId(quoteId) && isValidQuote(incoming())
+        && incoming().id == existing().id && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time
+        && hasEntityAccess(existing().entityId);
+      allow delete: if isManagerOrAbove() && isValidId(quoteId) && hasEntityAccess(existing().entityId);
+    }
+
+    match /quoteItems/{itemId} {
+      allow get: if isActiveUser() && isValidId(itemId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(itemId) && isValidQuoteItem(incoming())
+        && incoming().id == itemId && hasEntityAccess(incoming().entityId);
+      allow update: if canWriteCrmData() && isValidId(itemId) && isValidQuoteItem(incoming())
+        && incoming().id == existing().id && hasEntityAccess(existing().entityId);
+      allow delete: if isManagerOrAbove() && isValidId(itemId) && hasEntityAccess(existing().entityId);
+    }
+
+    match /invoices/{invoiceId} {
+      allow get: if isActiveUser() && isValidId(invoiceId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(invoiceId) && isValidInvoice(incoming())
+        && incoming().id == invoiceId && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId)
+        && (isManagerOrAbove() || incoming().get('approvalStatus', 'pending_approval') == 'pending_approval');
+      allow update: if canWriteCrmData() && isValidId(invoiceId) && isValidInvoice(incoming())
+        && incoming().id == existing().id && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time
+        && hasEntityAccess(existing().entityId)
+        && (
+          isSuperAdmin() ||
+          (
+            incoming().get('approvalStatus', 'approved') == existing().get('approvalStatus', 'approved') ||
+            (getUserRole() == 'sales' && incoming().get('approvalStatus', 'pending_approval') == 'pending_approval')
+          )
+        );
+      allow delete: if isSuperAdmin() && isValidId(invoiceId);
+    }
+
+    match /invoiceItems/{itemId} {
+      allow get: if isActiveUser() && isValidId(itemId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(itemId) && isValidInvoiceItem(incoming())
+        && incoming().id == itemId && hasEntityAccess(incoming().entityId);
+      allow update: if canWriteCrmData() && isValidId(itemId) && isValidInvoiceItem(incoming())
+        && incoming().id == existing().id && hasEntityAccess(existing().entityId);
+      allow delete: if isSuperAdmin() && isValidId(itemId);
+    }
+
+    match /payments/{paymentId} {
+      allow get: if isActiveUser() && isValidId(paymentId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(paymentId) && isValidPayment(incoming())
+        && incoming().id == paymentId && incoming().recordedByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && hasEntityAccess(incoming().entityId)
+        && exists(/databases/$(database)/documents/invoices/$(incoming().invoiceId));
+      allow update: if false;
+      allow delete: if isSuperAdmin() && isValidId(paymentId);
+    }
+
+    // --- Relation client : Réclamations, Demandes & Satisfaction ---
+    match /complaints/{complaintId} {
+      allow get: if isActiveUser() && isValidId(complaintId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(complaintId) && isValidComplaint(incoming())
+        && incoming().id == complaintId && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow update: if canWriteCrmData() && isValidId(complaintId) && isValidComplaint(incoming())
+        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time
+        && hasEntityAccess(existing().entityId);
+      allow delete: if isManagerOrAbove() && isValidId(complaintId) && hasEntityAccess(existing().entityId);
+    }
+
+    match /serviceRequests/{requestId} {
+      allow get: if isActiveUser() && isValidId(requestId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(requestId) && isValidServiceRequest(incoming())
+        && incoming().id == requestId && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow update: if canWriteCrmData() && isValidId(requestId) && isValidServiceRequest(incoming())
+        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time
+        && hasEntityAccess(existing().entityId);
+      allow delete: if isManagerOrAbove() && isValidId(requestId) && hasEntityAccess(existing().entityId);
+    }
+
+    match /satisfactionSurveys/{surveyId} {
+      allow get: if isActiveUser() && isValidId(surveyId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(surveyId) && isValidSatisfactionSurvey(incoming())
+        && incoming().id == surveyId && incoming().createdAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow update: if canWriteCrmData() && isValidId(surveyId) && isValidSatisfactionSurvey(incoming())
+        && incoming().id == existing().id && incoming().createdAt == existing().createdAt
+        && hasEntityAccess(existing().entityId);
+      allow delete: if isManagerOrAbove() && isValidId(surveyId) && hasEntityAccess(existing().entityId);
+    }
+
+    // --- Intégrations, Compteurs & Mentions légales ---
+    match /integrations/{integrationId} {
+      allow get: if isActiveUser() && isValidId(integrationId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create, update: if isManagerOrAbove() && isValidId(integrationId) && isValidIntegration(incoming())
+        && incoming().id == integrationId && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow delete: if isSuperAdmin() && isValidId(integrationId);
+    }
+
+    match /numberingCounters/{counterId} {
+      allow get: if isActiveUser() && isValidId(counterId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create, update: if canWriteCrmData() && isValidId(counterId) && isValidNumberingCounter(incoming())
+        && incoming().id == counterId && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow delete: if false;
+    }
+
+    match /legalSettings/{legalId} {
+      allow get: if isActiveUser() && isValidId(legalId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create, update: if isManagerOrAbove() && isValidId(legalId) && isValidLegalSetting(incoming())
+        && incoming().id == legalId && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow delete: if isSuperAdmin() && isValidId(legalId);
+    }
+
+    // --- Collections: pipelines, pipelineStages, tags, auditLogs, settings ---
+    match /pipelines/{pipelineId} {
+      allow get: if isActiveUser() && isValidId(pipelineId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if isManagerOrAbove() && isValidId(pipelineId) && isValidPipeline(incoming())
+        && incoming().id == pipelineId && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow update: if isManagerOrAbove() && isValidId(pipelineId) && isValidPipeline(incoming())
+        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time
+        && hasEntityAccess(existing().entityId);
+      allow delete: if isSuperAdmin() && isValidId(pipelineId);
+    }
+
+    match /pipelineStages/{stageId} {
+      allow get: if isActiveUser() && isValidId(stageId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if isManagerOrAbove() && isValidId(stageId) && isValidPipelineStage(incoming())
+        && incoming().id == stageId && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow update: if isManagerOrAbove() && isValidId(stageId) && isValidPipelineStage(incoming())
+        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time
+        && hasEntityAccess(existing().entityId);
+      allow delete: if isSuperAdmin() && isValidId(stageId);
+    }
+
+    match /tags/{tagId} {
+      allow get: if isActiveUser() && isValidId(tagId);
+      allow list: if isActiveUser() && (resource.data.entityId == 'group' || resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(tagId) && isValidTag(incoming())
+        && incoming().id == tagId && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isManagerOrAbove() && isValidId(tagId) && isValidTag(incoming())
+        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
+      allow delete: if isManagerOrAbove() && isValidId(tagId);
+    }
+
+    match /auditLogs/{logId} {
+      allow get: if isActiveUser() && isValidId(logId) && hasEntityAccess(existing().entityId);
+      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create: if canWriteCrmData() && isValidId(logId) && isValidAuditLog(incoming())
+        && incoming().id == logId && incoming().actorUid == request.auth.uid && incoming().createdAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    match /settings/{settingId} {
+      allow get: if isActiveUser() && isValidId(settingId);
+      allow list: if isActiveUser() && (resource.data.scope == 'global' || resource.data.scope in userEntityIds() || isBootstrappedSuperAdmin());
+      allow create, update: if isManagerOrAbove() && isValidId(settingId) && isValidSetting(incoming())
+        && incoming().id == settingId && incoming().updatedByUid == request.auth.uid && incoming().updatedAt == request.time;
+      allow delete: if isSuperAdmin() && isValidId(settingId);
+    }
+
+    // --- Notifications de validation factures ---
+    match /notifications/{notificationId} {
+      allow get: if isActiveUser() && isValidId(notificationId) && (
+        isSuperAdmin() ||
+        existing().entityId in userEntityIds() ||
+        existing().get('targetUserUid', '') == request.auth.uid
+      );
+      allow list: if isActiveUser() && (
+        isBootstrappedSuperAdmin() ||
+        resource.data.entityId in userEntityIds() ||
+        resource.data.targetUserUid == request.auth.uid
+      );
+      allow create: if canWriteCrmData() && isValidId(notificationId) && isValidNotification(incoming())
+        && incoming().id == notificationId && incoming().actorUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && hasEntityAccess(incoming().entityId);
+      allow update: if isActiveUser() && isValidId(notificationId) && isValidNotification(incoming())
+        && (isSuperAdmin() || existing().entityId in userEntityIds() || existing().get('targetUserUid', '') == request.auth.uid)
+        && incoming().diff(existing()).affectedKeys().hasOnly(['readByUids']);
+      allow delete: if isSuperAdmin() && isValidId(notificationId);
+    }
+  }
+}

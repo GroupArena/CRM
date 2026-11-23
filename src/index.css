@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Poppins", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Gotham", "Montserrat", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Gotham", "Montserrat", ui-sans-serif, system-ui, sans-serif;
+
+  --color-arena-blue: #19283E;
+  --color-arena-blue-hover: #223552;
+  --color-arena-blue-deep: #121D2E;
+  --color-arena-gold: #C9A125;
+  --color-arena-gold-dark: #AD7300;
+  --color-arena-gold-light: #DBB361;
+  --color-arena-gray: #E1E4EA;
+  --color-arena-canvas: #F4F5F8;
+  --color-arena-bordeaux: #7A1F2B;
+}
+
+:root {
+  --arena-blue: #19283E;
+  --arena-blue-hover: #223552;
+  --arena-gold: #C9A125;
+  --arena-gold-dark: #AD7300;
+  --arena-gold-light: #DBB361;
+  --arena-gray: #E1E4EA;
+  --arena-canvas: #F4F5F8;
+  --arena-bordeaux: #7A1F2B;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-sans);
+    background-color: var(--arena-canvas);
+    color: var(--arena-blue);
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.arena-gradient-institutional {
+  background: linear-gradient(125deg, #19283E 0%, #19283E 48%, #C9A125 84%, #E1E4EA 100%);
+}
+
+.arena-gradient-premium {
+  background: linear-gradient(125deg, #19283E 0%, #243347 45%, #AD7300 78%, #C9A125 100%);
+}
