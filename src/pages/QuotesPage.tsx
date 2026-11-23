@@ -9,6 +9,7 @@ import {
   XCircle,
   Edit2,
   Eye,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { useCrm } from '../context/CrmContext';
 import { useAuth } from '../hooks/useAuth';
@@ -17,11 +18,13 @@ import { QuoteStatusBadge } from '../components/ui/StatusBadge';
 import { EmptyState } from '../components/ui/EmptyState';
 import { QuoteFormModal } from '../components/crm/QuoteFormModal';
 import { QuoteDocumentModal } from '../components/crm/QuoteDocumentModal';
+import { AccountingReportModal } from '../components/crm/AccountingReportModal';
 import { formatCurrency, formatDateFr } from '../utils/crmLogic';
 import { exportQuotePdf } from '../utils/pdfExport';
 
 export function QuotesPage() {
   const {
+    selectedEntityId,
     authorizedEntities,
     scopedQuotes,
     quotes,
@@ -42,6 +45,7 @@ export function QuotesPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingQuote, setEditingQuote] = useState<Quote | null>(null);
   const [previewQuoteId, setPreviewQuoteId] = useState<string | null>(null);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
 
   useEffect(() => {
     const targetPreviewId = searchParams.get('preview');
@@ -118,19 +122,30 @@ export function QuotesPage() {
           </p>
         </div>
 
-        {canWriteCrm && (
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
-            onClick={() => {
-              setEditingQuote(null);
-              setModalOpen(true);
-            }}
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#19283E] px-4 text-sm font-medium text-white hover:bg-[#223552] whitespace-nowrap"
+            onClick={() => setReportModalOpen(true)}
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 text-sm font-medium text-[#19283E] hover:bg-slate-50 whitespace-nowrap shrink-0"
           >
-            <Plus className="h-4 w-4 text-[#C9A125]" />
-            Créer un devis
+            <FileSpreadsheet className="h-4 w-4 text-[#AD7300]" />
+            Reporting comptable
           </button>
-        )}
+
+          {canWriteCrm && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditingQuote(null);
+                setModalOpen(true);
+              }}
+              className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#19283E] px-4 text-sm font-medium text-white hover:bg-[#223552] whitespace-nowrap shrink-0"
+            >
+              <Plus className="h-4 w-4 text-[#C9A125]" />
+              Créer un devis
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filtres */}
@@ -335,6 +350,13 @@ export function QuotesPage() {
           }
         }}
         quote={previewQuote}
+      />
+
+      <AccountingReportModal
+        open={reportModalOpen}
+        onClose={() => setReportModalOpen(false)}
+        defaultScope="both"
+        defaultEntityId={entityFilter !== 'all' ? entityFilter : selectedEntityId}
       />
     </div>
   );

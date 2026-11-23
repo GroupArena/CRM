@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   Clock,
   Lock,
+  FileSpreadsheet,
 } from 'lucide-react';
 import { useCrm } from '../context/CrmContext';
 import { useAuth } from '../hooks/useAuth';
@@ -25,6 +26,7 @@ import { EmptyState } from '../components/ui/EmptyState';
 import { InvoiceFormModal } from '../components/crm/InvoiceFormModal';
 import { InvoiceDocumentModal } from '../components/crm/InvoiceDocumentModal';
 import { PaymentFormModal } from '../components/crm/PaymentFormModal';
+import { AccountingReportModal } from '../components/crm/AccountingReportModal';
 import { formatCurrency, formatDateFr } from '../utils/crmLogic';
 import {
   canSendInvoiceToClient,
@@ -59,6 +61,7 @@ export function InvoicesPage() {
   const [previewInvoiceId, setPreviewInvoiceId] = useState<string | null>(null);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentInvoice, setPaymentInvoice] = useState<Invoice | null>(null);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
 
   const isSuperAdmin = canValidateInvoices(user);
   const todayIso = new Date().toISOString();
@@ -160,7 +163,18 @@ export function InvoicesPage() {
     const legal = legalSettings.find((l) => l.entityId === inv.entityId);
     const company = companies.find((c) => c.id === inv.companyId);
     const contact = contacts.find((c) => c.id === inv.contactId);
-    const filename = await exportInvoicePdf(inv, items, { entity, legal, company, contact });
+    const linkedDep = inv.deductedDepositInvoiceId
+      ? invoices.find((i) => i.id === inv.deductedDepositInvoiceId)
+      : undefined;
+    const resolvedPct =
+      inv.depositPercentage && inv.depositPercentage < 100
+        ? inv.depositPercentage
+        : linkedDep?.depositPercentage ?? inv.depositPercentage;
+    const filename = await exportInvoicePdf(
+      { ...inv, depositPercentage: resolvedPct },
+      items,
+      { entity, legal, company, contact }
+    );
     addToast({ type: 'success', title: 'Facture PDF exportée', description: filename });
   };
 
@@ -185,19 +199,30 @@ export function InvoicesPage() {
           </p>
         </div>
 
-        {canWriteCrm && (
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
-            onClick={() => {
-              setEditingInvoice(null);
-              setInvoiceModalOpen(true);
-            }}
-            className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#19283E] px-4 text-sm font-medium text-white hover:bg-[#223552] whitespace-nowrap"
+            onClick={() => setReportModalOpen(true)}
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 text-sm font-medium text-[#19283E] hover:bg-slate-50 whitespace-nowrap shrink-0"
           >
-            <Plus className="h-4 w-4 text-[#C9A125]" />
-            Nouvelle facture
+            <FileSpreadsheet className="h-4 w-4 text-[#AD7300]" />
+            Reporting comptable
           </button>
-        )}
+
+          {canWriteCrm && (
+            <button
+              type="button"
+              onClick={() => {
+                setEditingInvoice(null);
+                setInvoiceModalOpen(true);
+              }}
+              className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#19283E] px-4 text-sm font-medium text-white hover:bg-[#223552] whitespace-nowrap shrink-0"
+            >
+              <Plus className="h-4 w-4 text-[#C9A125]" />
+              Nouvelle facture
+            </button>
+          )}
+        </div>
       </div>
 
       {pendingCount > 0 && (
@@ -326,9 +351,14 @@ export function InvoicesPage() {
                           <div className="text-[11px] font-medium text-[#AD7300] mt-0.5">
                             Acompte {inv.depositPercentage ?? 100}%
                           </div>
-                        ) : inv.deductedDepositAmount && inv.deductedDepositAmount > 0 ? (
+                        ) : inv.invoiceType === 'balance' ||
+                          (inv.deductedDepositAmount && inv.deductedDepositAmount > 0) ? (
                           <div className="text-[11px] font-medium text-emerald-700 mt-0.5">
-                            Solde · Acompte déduit
+                            Solde · Acompte{' '}
+                            {inv.depositPercentage && inv.depositPercentage < 100
+                              ? `${inv.depositPercentage}% `
+                              : ''}
+                            payé déduit
                           </div>
                         ) : null}
                         <div className="text-[11px] font-sans tabular-nums text-slate-500 mt-0.5">
@@ -479,6 +509,13 @@ export function InvoicesPage() {
         open={paymentModalOpen}
         onClose={() => setPaymentModalOpen(false)}
         invoice={paymentInvoice}
+      />
+
+      <AccountingReportModal
+        open={reportModalOpen}
+        onClose={() => setReportModalOpen(false)}
+        defaultScope="both"
+        defaultEntityId={entityFilter !== 'all' ? entityFilter : selectedEntityId}
       />
     </div>
   );

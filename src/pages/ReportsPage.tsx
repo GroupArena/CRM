@@ -14,8 +14,9 @@ import {
   Pie,
   Cell,
 } from 'recharts';
-import { Download } from 'lucide-react';
+import { Download, FileSpreadsheet } from 'lucide-react';
 import { useCrm } from '../context/CrmContext';
+import { AccountingReportModal } from '../components/crm/AccountingReportModal';
 import { SEQUENCE_CHANNEL_LABELS } from '../types';
 import { formatCurrency } from '../utils/crmLogic';
 import {
@@ -53,6 +54,7 @@ export function ReportsPage() {
   const [entityFilter, setEntityFilter] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [accountingModalOpen, setAccountingModalOpen] = useState(false);
 
   const inPeriod = (iso?: string) => {
     const d = (iso || '').slice(0, 10);
@@ -206,14 +208,25 @@ export function ReportsPage() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleExportReportCsv}
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap"
-        >
-          <Download className="h-4 w-4" />
-          Exporter synthèse CSV
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setAccountingModalOpen(true)}
+            className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#19283E] px-3.5 text-sm font-medium text-white hover:bg-[#223552] whitespace-nowrap shrink-0"
+          >
+            <FileSpreadsheet className="h-4 w-4 text-[#C9A125]" />
+            Reporting Factures &amp; Devis
+          </button>
+
+          <button
+            type="button"
+            onClick={handleExportReportCsv}
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3.5 text-sm font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap shrink-0"
+          >
+            <Download className="h-4 w-4" />
+            Exporter synthèse CSV
+          </button>
+        </div>
       </div>
 
       {/* Filtres */}
@@ -573,6 +586,15 @@ export function ReportsPage() {
           )}
         </div>
       </div>
+
+      <AccountingReportModal
+        open={accountingModalOpen}
+        onClose={() => setAccountingModalOpen(false)}
+        defaultScope="both"
+        defaultEntityId={entityFilter}
+        defaultDateFrom={dateFrom}
+        defaultDateTo={dateTo}
+      />
     </div>
   );
 }
