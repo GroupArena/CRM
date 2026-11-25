@@ -5,7 +5,7 @@ import { DEFAULT_ENTITIES } from '../services/seedData';
 import { ArenaSymbol, BrandLogo } from '../components/ui/BrandLogo';
 
 const LOGIN_ENTITY_DESCRIPTIONS: Record<string, string> = {
-  'arena-business-center': 'Plateforme dédiée aux Entreprises & Investisseurs',
+  'arena-business-center': 'Plateforme dédiée aux Entrepreneurs & Investisseurs',
   improveo: 'Cabinet de conseils',
   'arena-studio-comm': 'Agence de communication',
   'maison-artisanat': 'Maison de production textile',
