@@ -165,6 +165,22 @@ export function getAuthorizedEntities(
   return activeEntities.filter((e) => user.entityIds.includes(e.id));
 }
 
+export function mergeDefaultRecordsById<T extends { id: string }>(
+  defaults: readonly T[],
+  remoteItems: readonly T[]
+): T[] {
+  if (remoteItems.length === 0) return [...defaults];
+  const remoteById = new Map(remoteItems.map((item) => [item.id, item]));
+  const merged = defaults.map((def) => remoteById.get(def.id) ?? def);
+  const defaultIds = new Set(defaults.map((def) => def.id));
+  for (const item of remoteItems) {
+    if (!defaultIds.has(item.id)) {
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
 export function resolveEffectiveActionStatus(
   action: CrmAction,
   referenceDateIso: string

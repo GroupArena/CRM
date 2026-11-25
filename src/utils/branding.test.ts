@@ -8,6 +8,7 @@ import {
   BRAND_LOGOS,
   getBrandLogoPath,
   getBrandSpec,
+  resolveCustomEntityLogoUrl,
 } from './branding';
 
 test('Arena Group charte palette matches official HEX values', () => {
@@ -53,5 +54,48 @@ test('getBrandLogoPath resolves light and dark variants cleanly', () => {
     getBrandLogoPath('arena-business-center', 'dark', './'),
     './assets/aistudio/Arena_Business_Center_-_Fond_Sombre_b9af2fa1.png'
   );
+  assert.equal(
+    getBrandLogoPath('improveo', 'dark', './'),
+    './assets/aistudio/Improveo_-_Fond_Sombre_-_Logo_dd27f192.png'
+  );
+  assert.equal(
+    getBrandLogoPath('arena-studio-comm', 'dark', './'),
+    './assets/aistudio/Arena_Studio_comm_-_Fond_Sombre_782142da.png'
+  );
+  assert.equal(
+    getBrandLogoPath('maison-artisanat', 'dark', './'),
+    './assets/aistudio/Maison___Artisanat_-_Fond_Sombre_-_Logo_7f05a528'
+  );
   assert.equal(getBrandSpec('unknown-entity').id, 'group');
+});
+
+test('resolveCustomEntityLogoUrl ignores legacy internal paths and never overrides dark logos of official entities', () => {
+  assert.equal(
+    resolveCustomEntityLogoUrl(
+      'arena-business-center',
+      './assets/aistudio/Arena_Business_Center_-_Fond_Claire_-_ed43eee7.png',
+      'light'
+    ),
+    undefined
+  );
+  assert.equal(
+    resolveCustomEntityLogoUrl(
+      'improveo',
+      '/assets/aistudio/Improveo_-_Fond_Claire_-_Logo_187e51f4.png',
+      'dark'
+    ),
+    undefined
+  );
+  assert.equal(
+    resolveCustomEntityLogoUrl('arena-business-center', 'https://cdn.example.com/custom.png', 'dark'),
+    undefined
+  );
+  assert.equal(
+    resolveCustomEntityLogoUrl('arena-business-center', ' https://cdn.example.com/custom.png ', 'light'),
+    'https://cdn.example.com/custom.png'
+  );
+  assert.equal(
+    resolveCustomEntityLogoUrl('custom-entity', 'https://cdn.example.com/custom.png', 'dark'),
+    'https://cdn.example.com/custom.png'
+  );
 });

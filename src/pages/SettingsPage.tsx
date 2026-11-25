@@ -44,6 +44,7 @@ import {
   ARENA_SLOGANS,
   getBrandSpec,
   getEntityInvoiceTheme,
+  resolveCustomEntityLogoUrl,
 } from '../utils/branding';
 import { processSignatureOrStampFile } from '../utils/imageUpload';
 import { BrandLogo } from '../components/ui/BrandLogo';
@@ -247,7 +248,7 @@ export function SettingsPage() {
     setEditEntityName(entity.name);
     setEditEntityDesc(entity.description ?? '');
     setEditEntityColor(entity.color || '#19283E');
-    setEditEntityLogoUrl(entity.logoUrl ?? '');
+    setEditEntityLogoUrl(resolveCustomEntityLogoUrl(entity.id, entity.logoUrl, 'light') ?? '');
     setEditEntityActive(entity.active);
     setEditEntityError(null);
   };
@@ -665,7 +666,6 @@ export function SettingsPage() {
                         entityId={entity.id}
                         variant="dark"
                         alt={`Logo ${entity.name} fond sombre`}
-                        customUrl={entity.logoUrl?.trim() || undefined}
                         className="h-10 w-full"
                       />
                       <span className="text-[11px] text-[#E1E4EA]/80">

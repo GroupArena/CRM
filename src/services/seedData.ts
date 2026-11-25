@@ -30,15 +30,13 @@ import type {
   UserProfile,
 } from '../types';
 
-import { getBrandLogoPath } from '../utils/branding';
-
 export const DEFAULT_ENTITIES: CrmEntity[] = [
   {
     id: 'arena-business-center',
     name: 'Arena Business Center',
     slug: 'arena-business-center',
     description: 'Domiciliation d’entreprises, bureaux équipés et salles de réunion.',
-    logoUrl: getBrandLogoPath('arena-business-center', 'light'),
+    logoUrl: '',
     color: '#19283E',
     active: true,
     createdAt: '2026-09-01T08:00:00Z',
@@ -49,7 +47,7 @@ export const DEFAULT_ENTITIES: CrmEntity[] = [
     name: 'Improveo',
     slug: 'improveo',
     description: 'Conseil opérationnel, certification Qualiopi et performance PME.',
-    logoUrl: getBrandLogoPath('improveo', 'light'),
+    logoUrl: '',
     color: '#0B4EA2',
     active: true,
     createdAt: '2026-09-01T08:00:00Z',
@@ -60,7 +58,7 @@ export const DEFAULT_ENTITIES: CrmEntity[] = [
     name: 'Arena Studio Comm',
     slug: 'arena-studio-comm',
     description: 'Agence de communication, identité de marque et stratégie digitale.',
-    logoUrl: getBrandLogoPath('arena-studio-comm', 'light'),
+    logoUrl: '',
     color: '#0B6CA8',
     active: true,
     createdAt: '2026-09-01T08:00:00Z',
@@ -71,7 +69,7 @@ export const DEFAULT_ENTITIES: CrmEntity[] = [
     name: 'Maison & Artisanat',
     slug: 'maison-artisanat',
     description: 'Valorisation des métiers d’art, décoration sur mesure et distribution.',
-    logoUrl: getBrandLogoPath('maison-artisanat', 'light'),
+    logoUrl: '',
     color: '#5C261D',
     active: true,
     createdAt: '2026-09-01T08:00:00Z',

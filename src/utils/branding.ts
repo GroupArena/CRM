@@ -162,6 +162,25 @@ export function getBrandLogoPath(
   return resolveAssetUrl(rawPath, baseUrl);
 }
 
+export function resolveCustomEntityLogoUrl(
+  entityId?: string,
+  customUrl?: string,
+  variant: LogoVariant = 'light'
+): string | undefined {
+  const trimmed = customUrl?.trim();
+  if (!trimmed) return undefined;
+
+  if (variant !== 'light' && (!entityId || entityId === 'all' || entityId in BRAND_LOGOS)) {
+    return undefined;
+  }
+
+  if (/^(?:\.?\/)?assets\/aistudio\//i.test(trimmed)) {
+    return undefined;
+  }
+
+  return trimmed;
+}
+
 export type RgbTuple = [number, number, number];
 
 export interface InvoiceThemePalette {
@@ -250,4 +269,3 @@ export function getEntityInvoiceTheme(
     softTintRgb: hexToRgb(softTintHex),
   };
 }
-

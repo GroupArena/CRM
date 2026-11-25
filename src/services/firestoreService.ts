@@ -250,8 +250,17 @@ async function saveStandardDoc<T extends { id: string }>(
   for (const key of Object.keys(clean)) {
     if (clean[key] === undefined) delete clean[key];
   }
+  let effectiveOp: OperationType = isNew ? OperationType.CREATE : OperationType.UPDATE;
   try {
-    if (isNew) {
+    let shouldCreate = isNew;
+    if (!shouldCreate) {
+      const existingSnap = await getDoc(ref);
+      if (!existingSnap.exists()) {
+        shouldCreate = true;
+        effectiveOp = OperationType.CREATE;
+      }
+    }
+    if (shouldCreate) {
       await setDoc(ref, {
         ...clean,
         ...(hasCreatedAt ? { createdAt: serverTimestamp() } : {}),
@@ -266,7 +275,7 @@ async function saveStandardDoc<T extends { id: string }>(
   } catch (error) {
     handleFirestoreError(
       error,
-      isNew ? OperationType.CREATE : OperationType.UPDATE,
+      effectiveOp,
       `${collectionName}/${record.id}`
     );
   }
@@ -630,8 +639,43 @@ export async function saveActionDoc(
 export const saveDealDoc = (deal: Deal, isNew: boolean) =>
   saveStandardDoc('opportunities', deal, isNew);
 
-export const saveEntityDoc = (entity: CrmEntity, isNew: boolean) =>
-  saveStandardDoc('entities', entity, isNew);
+export async function saveEntityDoc(entity: CrmEntity, isNew: boolean): Promise<void> {
+  const normalized: CrmEntity = {
+    ...entity,
+    slug: (entity.slug || entity.id).trim() || entity.id,
+    name: entity.name.trim(),
+    description: (entity.description ?? '').trim(),
+    color: (entity.color || '#19283E').trim(),
+    logoUrl: (entity.logoUrl ?? '').trim(),
+    active: Boolean(entity.active),
+  };
+  await saveStandardDoc('entities', normalized, isNew);
+
+  // Si la collection entities vient d'être initialisée via l'édition d'une entité par défaut,
+  // crée aussi les autres entités par défaut manquantes pour qu'elles restent visibles.
+  if (db) {
+    try {
+      const existingIds = await getExistingDocIds('entities');
+      const missingDefaults = DEFAULT_ENTITIES.filter(
+        (def) => def.id !== normalized.id && !existingIds.has(def.id)
+      );
+      if (missingDefaults.length > 0) {
+        const batch = writeBatch(db);
+        for (const def of missingDefaults) {
+          const { createdAt: _c, updatedAt: _u, ...rest } = def;
+          batch.set(doc(db, 'entities', def.id), {
+            ...rest,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+        await batch.commit();
+      }
+    } catch {
+      // Non bloquant : l'entité modifiée a déjà été enregistrée
+    }
+  }
+}
 
 export async function createUserDoc(user: UserProfile): Promise<void> {
   if (!db) throw new Error('Firestore non initialisé.');

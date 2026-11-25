@@ -11,7 +11,12 @@ import type {
   QuoteItem,
 } from '../types';
 import { formatCurrency, formatDateFr } from './crmLogic';
-import { getBrandLogoPath, getEntityInvoiceTheme, resolveAssetUrl } from './branding';
+import {
+  getBrandLogoPath,
+  getEntityInvoiceTheme,
+  resolveAssetUrl,
+  resolveCustomEntityLogoUrl,
+} from './branding';
 import {
   computeEuroConversion,
   getClientFiscalInfo,
@@ -292,9 +297,10 @@ export async function buildArenaA4Pdf(
 
   // --- 2. Load entity light logo + Signature & Tampon ---
   const includeStampAndSignature = shouldRenderStampAndSignature(input.kind);
+  const entityKey = ctx.entity?.id ?? input.entityId ?? 'group';
   const logoSrc =
-    ctx.entity?.logoUrl?.trim() ||
-    getBrandLogoPath(ctx.entity?.id ?? input.entityId ?? 'group', 'light');
+    resolveCustomEntityLogoUrl(entityKey, ctx.entity?.logoUrl, 'light') ||
+    getBrandLogoPath(entityKey, 'light');
   const [logoData, stampData, signatureData] = await Promise.all([
     loadImageAsDataUrl(logoSrc),
     includeStampAndSignature ? loadImageAsDataUrl(ctx.legal?.stampImageUrl) : Promise.resolve(null),

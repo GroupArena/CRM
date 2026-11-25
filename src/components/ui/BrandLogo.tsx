@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react';
-import { getBrandLogoPath, getBrandSpec, type LogoVariant } from '../../utils/branding';
+import {
+  getBrandLogoPath,
+  getBrandSpec,
+  resolveCustomEntityLogoUrl,
+  type LogoVariant,
+} from '../../utils/branding';
 
 interface BrandLogoProps {
   entityId?: string;
@@ -20,7 +25,8 @@ export function BrandLogo({
 }: BrandLogoProps) {
   const [failed, setFailed] = useState(false);
   const spec = getBrandSpec(entityId);
-  const src = customUrl || getBrandLogoPath(entityId, variant);
+  const resolvedCustomUrl = resolveCustomEntityLogoUrl(entityId, customUrl, variant);
+  const src = resolvedCustomUrl || getBrandLogoPath(entityId, variant);
 
   useEffect(() => {
     setFailed(false);

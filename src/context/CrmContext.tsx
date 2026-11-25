@@ -134,6 +134,7 @@ import {
   filterProspectsByScope,
   formatCurrency,
   getAuthorizedEntities,
+  mergeDefaultRecordsById,
   setActiveDefaultCurrency,
 } from '../utils/crmLogic';
 import {
@@ -734,7 +735,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       subscribeToCollection<LegalSetting>(
         'legalSettings',
         hasAssignedEntities ? entityConstraints() : [where('entityId', '==', '__none__')],
-        (items) => setLegalSettings(items.length > 0 ? items : DEFAULT_LEGAL_SETTINGS)
+        (items) => setLegalSettings(mergeDefaultRecordsById(DEFAULT_LEGAL_SETTINGS, items))
       ),
       // Entity-scoped
       subscribeToCollection<Prospect>(
@@ -753,10 +754,10 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       subscribeToCollection<CrmAction>('actions', entityConstraints(), setActions),
       subscribeToCollection<Deal>('opportunities', entityConstraints(), setDeals),
       subscribeToCollection<Pipeline>('pipelines', entityConstraints(), (items) =>
-        setPipelines(items.length > 0 ? items : DEFAULT_PIPELINES)
+        setPipelines(mergeDefaultRecordsById(DEFAULT_PIPELINES, items))
       ),
       subscribeToCollection<PipelineStage>('pipelineStages', entityConstraints(), (items) =>
-        setStages(items.length > 0 ? items : DEFAULT_PIPELINE_STAGES)
+        setStages(mergeDefaultRecordsById(DEFAULT_PIPELINE_STAGES, items))
       ),
       subscribeToCollection<Quote>('quotes', entityConstraints(), setQuotes),
       subscribeToCollection<QuoteItem>('quoteItems', entityConstraints(), setQuoteItems),
@@ -771,7 +772,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         setSatisfactionSurveys
       ),
       subscribeToCollection<IntegrationSetting>('integrations', entityConstraints(), (items) =>
-        setIntegrations(items.length > 0 ? items : DEFAULT_INTEGRATIONS)
+        setIntegrations(mergeDefaultRecordsById(DEFAULT_INTEGRATIONS, items))
       ),
       subscribeToCollection<NumberingCounter>('numberingCounters', entityConstraints(), setNumberingCounters),
       subscribeToCollection<AuditLog>('auditLogs', entityConstraints(), setAuditLogs),
@@ -2606,7 +2607,17 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
   const saveEntity = async (entity: CrmEntity, isNew: boolean) => {
     if (!assertSuperAdminSettings()) return;
     const now = new Date().toISOString();
-    const payload = { ...entity, updatedAt: now, createdAt: isNew ? now : entity.createdAt };
+    const payload: CrmEntity = {
+      ...entity,
+      slug: (entity.slug || entity.id).trim() || entity.id,
+      name: entity.name.trim(),
+      description: (entity.description ?? '').trim(),
+      color: (entity.color || '#19283E').trim(),
+      logoUrl: (entity.logoUrl ?? '').trim(),
+      active: Boolean(entity.active),
+      updatedAt: now,
+      createdAt: isNew ? now : entity.createdAt,
+    };
     if (authMode === 'demo') {
       persistDemoState((prev) => ({
         ...prev,

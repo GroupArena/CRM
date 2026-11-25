@@ -14,6 +14,7 @@ import {
   formatCurrency,
   getAuthorizedEntities,
   isBootstrappedSuperAdminEmail,
+  mergeDefaultRecordsById,
   resolveBootstrappedUserProfile,
   resolveEffectiveActionStatus,
   setActiveDefaultCurrency,
@@ -353,3 +354,20 @@ test('Settings, entity/user/tag management and user deletion are restricted to a
   assert.equal(canDeleteProductRecord(READER_USER), false);
 });
 
+test('mergeDefaultRecordsById preserves unseeded defaults and applies remote overrides cleanly', () => {
+  const defaults = [
+    { id: 'arena-business-center', name: 'Arena Business Center' },
+    { id: 'improveo', name: 'Improveo' },
+  ];
+  assert.deepEqual(mergeDefaultRecordsById(defaults, []), defaults);
+
+  const merged = mergeDefaultRecordsById(defaults, [
+    { id: 'improveo', name: 'Improveo Consulting' },
+    { id: 'custom-entity', name: 'Arena Tech' },
+  ]);
+  assert.deepEqual(merged, [
+    { id: 'arena-business-center', name: 'Arena Business Center' },
+    { id: 'improveo', name: 'Improveo Consulting' },
+    { id: 'custom-entity', name: 'Arena Tech' },
+  ]);
+});
