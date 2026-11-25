@@ -1,22 +1,10 @@
 @import "tailwindcss";
 
-@theme {
+:root {
   --font-display: "Poppins", ui-sans-serif, system-ui, sans-serif;
   --font-sans: "Gotham", "Montserrat", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Gotham", "Montserrat", ui-sans-serif, system-ui, sans-serif;
 
-  --color-arena-blue: #19283E;
-  --color-arena-blue-hover: #223552;
-  --color-arena-blue-deep: #121D2E;
-  --color-arena-gold: #C9A125;
-  --color-arena-gold-dark: #AD7300;
-  --color-arena-gold-light: #DBB361;
-  --color-arena-gray: #E1E4EA;
-  --color-arena-canvas: #F4F5F8;
-  --color-arena-bordeaux: #7A1F2B;
-}
-
-:root {
   --arena-blue: #19283E;
   --arena-blue-hover: #223552;
   --arena-gold: #C9A125;

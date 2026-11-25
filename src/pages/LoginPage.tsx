@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Lock, Mail, ArrowRight, CheckCircle2, RefreshCw } from 'lucide-react';
+import { Lock, Mail, ArrowRight, CheckCircle2, RefreshCw, WifiOff } from 'lucide-react';
 import { useAuth } from '../hooks/useAuth';
 import { DEFAULT_ENTITIES } from '../services/seedData';
 import { ArenaSymbol, BrandLogo } from '../components/ui/BrandLogo';
+import { formatFirebaseAuthErrorFr } from '../utils/firebaseErrors';
 
 const LOGIN_ENTITY_DESCRIPTIONS: Record<string, string> = {
   'arena-business-center': 'Plateforme dédiée aux Entrepreneurs & Investisseurs',
@@ -20,6 +21,9 @@ export function LoginPage() {
     logout,
     enterDemoMode,
     firebaseAvailable,
+    firestoreOffline,
+    authConnectionError,
+    retryFirebaseConnection,
   } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -39,26 +43,7 @@ export function LoginPage() {
     try {
       await loginWithEmail(email, password);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : '';
-      if (
-        msg.includes('invalid-credential') ||
-        msg.includes('wrong-password') ||
-        msg.includes('user-not-found')
-      ) {
-        setErrorMsg('Identifiants incorrects. Vérifiez votre email et votre mot de passe.');
-      } else if (msg.includes('too-many-requests')) {
-        setErrorMsg('Trop de tentatives. Veuillez patienter quelques instants avant de réessayer.');
-      } else if (msg.includes('network-request-failed') || msg.includes('the client is offline')) {
-        setErrorMsg(
-          'Réseau indisponible pour joindre Firebase. Vérifiez votre connexion ou accédez à la démo interactive.'
-        );
-      } else if (msg.includes('operation-not-allowed')) {
-        setErrorMsg(
-          'La connexion Email/Mot de passe doit être activée dans la console Firebase Authentication.'
-        );
-      } else {
-        setErrorMsg('Connexion impossible. Vérifiez vos identifiants ou la configuration Firebase.');
-      }
+      setErrorMsg(formatFirebaseAuthErrorFr(err));
     } finally {
       setLoading(false);
     }
@@ -91,11 +76,11 @@ export function LoginPage() {
     setInfoMsg(null);
     try {
       const verified = await refreshVerificationStatus();
-      if (!verified) {
+      if (!verified && !authConnectionError && !firestoreOffline) {
         setErrorMsg("L'adresse email n'est pas encore marquée comme vérifiée. Cliquez sur le lien reçu par email.");
       }
-    } catch {
-      setErrorMsg('Impossible de vérifier le statut du compte pour le moment.');
+    } catch (err) {
+      setErrorMsg(formatFirebaseAuthErrorFr(err));
     } finally {
       setLoading(false);
     }
@@ -184,6 +169,38 @@ export function LoginPage() {
               className="mb-5 rounded-lg border border-[#7A1F2B]/30 bg-[#7A1F2B]/10 px-4 py-3 text-sm text-[#7A1F2B]"
             >
               {errorMsg}
+            </div>
+          )}
+
+          {(firestoreOffline || authConnectionError) && !errorMsg && (
+            <div
+              role="alert"
+              className="mb-5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900 space-y-2.5"
+            >
+              <div className="flex items-start gap-2.5">
+                <WifiOff className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+                <p className="leading-relaxed">
+                  {authConnectionError ??
+                    'Cloud Firestore est temporairement inaccessible (réseau lent ou mode hors ligne). Vérifiez votre connexion Internet ou utilisez la démo interactive.'}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={async () => {
+                  setLoading(true);
+                  setErrorMsg(null);
+                  const ok = await retryFirebaseConnection();
+                  if (ok) {
+                    setInfoMsg('Connexion à Cloud Firestore rétablie.');
+                  }
+                  setLoading(false);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-950 hover:bg-amber-100/60 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Réessayer la connexion Firestore
+              </button>
             </div>
           )}
 

@@ -9,6 +9,7 @@ import {
   type Auth,
 } from 'firebase/auth';
 import {
+  enableNetwork,
   getFirestore,
   initializeFirestore,
   doc,
@@ -16,6 +17,7 @@ import {
   type Firestore,
   type FirestoreSettings,
 } from 'firebase/firestore';
+import { isFirestoreOfflineError } from './utils/firebaseErrors';
 
 interface FirebaseConfigShape {
   apiKey?: string;
@@ -76,9 +78,7 @@ if (isFirebaseConfigured) {
   const targetDatabaseId =
     databaseId && databaseId !== '(default)' ? databaseId : undefined;
   const firestoreSettings: FirestoreSettings = {
-    // Long-polling évite les blocages de 10s sur WebChannel derrière proxies/antivirus/FAI
-    experimentalForceLongPolling: true,
-    experimentalLongPollingOptions: { timeoutSeconds: 20 },
+    experimentalAutoDetectLongPolling: true,
     ignoreUndefinedProperties: true,
   };
   try {
@@ -147,6 +147,15 @@ export function handleFirestoreError(
   throw new Error(JSON.stringify(errInfo));
 }
 
+export async function recoverFirestoreNetwork(): Promise<void> {
+  if (!db) return;
+  try {
+    await enableNetwork(db);
+  } catch {
+    // Ignorer si déjà actif ou hors ligne
+  }
+}
+
 export async function testFirestoreConnection(): Promise<boolean> {
   if (!db) return false;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -156,7 +165,7 @@ export async function testFirestoreConnection(): Promise<boolean> {
     await getDocFromServer(doc(db, 'test', 'connection'));
     return true;
   } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
+    if (isFirestoreOfflineError(error)) {
       console.warn(
         'Firestore temporairement inaccessible (mode hors ligne). Vérifiez la connexion réseau ou utilisez le mode démonstration.'
       );

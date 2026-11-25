@@ -8,7 +8,15 @@ import {
   type User,
 } from 'firebase/auth';
 import { where } from 'firebase/firestore';
-import { auth, createAuthUserAsAdmin, googleProvider, isFirebaseConfigured, testFirestoreConnection } from '../firebase';
+import {
+  auth,
+  createAuthUserAsAdmin,
+  googleProvider,
+  isFirebaseConfigured,
+  recoverFirestoreNetwork,
+  testFirestoreConnection,
+} from '../firebase';
+import { formatFirebaseAuthErrorFr, isFirestoreOfflineError } from '../utils/firebaseErrors';
 import type {
   AuditLog,
   Company,
@@ -206,6 +214,9 @@ export interface CreateManagedUserPayload {
 interface CrmContextValue {
   authMode: AuthMode;
   firebaseAvailable: boolean;
+  firestoreOffline: boolean;
+  authConnectionError: string | null;
+  retryFirebaseConnection: () => Promise<boolean>;
   currentUser: UserProfile | null;
   selectedEntityId: EntityScope;
   setSelectedEntityId: (scope: EntityScope) => void;
@@ -448,6 +459,8 @@ function channelToActionType(channel: SequenceChannel): CrmAction['type'] {
 
 export function CrmProvider({ children }: { children: React.ReactNode }) {
   const [authMode, setAuthMode] = useState<AuthMode>('loading');
+  const [firestoreOffline, setFirestoreOffline] = useState<boolean>(false);
+  const [authConnectionError, setAuthConnectionError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const [selectedEntityId, setSelectedEntityId] = useState<EntityScope>('all');
@@ -574,6 +587,55 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     [applyDemoSnapshot]
   );
 
+  const loadFirebaseProfile = useCallback(async (fbUser: User): Promise<boolean> => {
+    try {
+      setPendingVerificationEmail(null);
+      const profile = await ensureUserProfile(
+        fbUser.uid,
+        fbUser.email ?? '',
+        fbUser.displayName ?? ''
+      );
+      setFirestoreOffline(false);
+      setAuthConnectionError(null);
+      setCurrentUser(profile);
+      setSelectedEntityId(
+        canViewAllEntities(profile) ? 'all' : profile.entityIds[0] ?? 'all'
+      );
+      setAuthMode('firebase');
+      return true;
+    } catch (err) {
+      if (isFirestoreOfflineError(err)) {
+        setFirestoreOffline(true);
+        setAuthConnectionError(formatFirebaseAuthErrorFr(err));
+      } else {
+        setAuthConnectionError(
+          'Impossible de charger votre profil CRM depuis Firestore pour le moment.'
+        );
+      }
+      console.error('Erreur chargement profil Firebase:', err);
+      setAuthMode('unauthenticated');
+      return false;
+    }
+  }, []);
+
+  const retryFirebaseConnection = useCallback(async (): Promise<boolean> => {
+    if (!isFirebaseConfigured || !auth) return false;
+    await recoverFirestoreNetwork();
+    const ok = await testFirestoreConnection();
+    setFirestoreOffline(!ok);
+    if (!ok) {
+      setAuthConnectionError(
+        'Impossible de joindre Cloud Firestore pour le moment (connexion lente ou hors ligne). Vérifiez votre réseau puis réessayez, ou utilisez le mode démonstration.'
+      );
+      return false;
+    }
+    setAuthConnectionError(null);
+    if (auth.currentUser?.emailVerified) {
+      return loadFirebaseProfile(auth.currentUser);
+    }
+    return true;
+  }, [loadFirebaseProfile]);
+
   useEffect(() => {
     const params = new URLSearchParams(
       window.location.search || window.location.hash.split('?')[1] || ''
@@ -588,11 +650,24 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    testFirestoreConnection();
+    let cancelled = false;
+    void testFirestoreConnection().then((ok) => {
+      if (!cancelled) {
+        setFirestoreOffline(!ok);
+      }
+    });
+
+    const handleOffline = () => setFirestoreOffline(true);
+    const handleOnline = () => {
+      void retryFirebaseConnection();
+    };
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
 
     const unsub = onAuthStateChanged(auth, async (fbUser: User | null) => {
       if (!fbUser) {
         setPendingVerificationEmail(null);
+        setAuthConnectionError(null);
         setAuthMode((prev) => (prev === 'demo' ? 'demo' : 'unauthenticated'));
         return;
       }
@@ -602,26 +677,16 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         setAuthMode('unauthenticated');
         return;
       }
-      try {
-        setPendingVerificationEmail(null);
-        const profile = await ensureUserProfile(
-          fbUser.uid,
-          fbUser.email ?? '',
-          fbUser.displayName ?? ''
-        );
-        setCurrentUser(profile);
-        setSelectedEntityId(
-          canViewAllEntities(profile) ? 'all' : profile.entityIds[0] ?? 'all'
-        );
-        setAuthMode('firebase');
-      } catch (err) {
-        console.error('Erreur chargement profil Firebase:', err);
-        setAuthMode('unauthenticated');
-      }
+      await loadFirebaseProfile(fbUser);
     });
 
-    return () => unsub();
-  }, [enterDemoMode]);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+      unsub();
+    };
+  }, [enterDemoMode, loadFirebaseProfile, retryFirebaseConnection]);
 
   // Real-time Firestore listeners
   useEffect(() => {
@@ -931,18 +996,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
     await auth.currentUser.getIdToken(true);
-    setPendingVerificationEmail(null);
-    const profile = await ensureUserProfile(
-      auth.currentUser.uid,
-      auth.currentUser.email ?? '',
-      auth.currentUser.displayName ?? ''
-    );
-    setCurrentUser(profile);
-    setSelectedEntityId(
-      canViewAllEntities(profile) ? 'all' : profile.entityIds[0] ?? 'all'
-    );
-    setAuthMode('firebase');
-    return true;
+    return loadFirebaseProfile(auth.currentUser);
   };
 
   const switchDemoUser = (userUid: string) => {
@@ -2778,6 +2832,9 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       value={{
         authMode,
         firebaseAvailable: isFirebaseConfigured,
+        firestoreOffline,
+        authConnectionError,
+        retryFirebaseConnection,
         currentUser,
         selectedEntityId,
         setSelectedEntityId,

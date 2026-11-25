@@ -16,7 +16,13 @@ import {
   type QueryConstraint,
   type Unsubscribe,
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import {
+  db,
+  handleFirestoreError,
+  OperationType,
+  recoverFirestoreNetwork,
+} from '../firebase';
+import { isFirestoreOfflineError } from '../utils/firebaseErrors';
 import type {
   AuditLog,
   Company,
@@ -101,6 +107,13 @@ function normalizeDoc<T>(id: string, data: Record<string, unknown>): T {
   return result as T;
 }
 
+export class FirestoreConnectionError extends Error {
+  constructor(message = 'Cloud Firestore temporairement inaccessible (mode hors ligne).') {
+    super(message);
+    this.name = 'FirestoreConnectionError';
+  }
+}
+
 export async function ensureUserProfile(
   uid: string,
   email: string,
@@ -110,7 +123,18 @@ export async function ensureUserProfile(
   const userRef = doc(db, 'users', uid);
   const allEntityIds = DEFAULT_ENTITIES.map((e) => e.id);
   try {
-    const snap = await getDoc(userRef);
+    let snap;
+    try {
+      snap = await getDoc(userRef);
+    } catch (readError) {
+      if (!isFirestoreOfflineError(readError)) {
+        throw readError;
+      }
+      await recoverFirestoreNetwork();
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      snap = await getDoc(userRef);
+    }
+
     const existing = snap.exists()
       ? normalizeDoc<UserProfile>(snap.id, snap.data())
       : null;
@@ -160,6 +184,11 @@ export async function ensureUserProfile(
 
     return resolved.profile;
   } catch (error) {
+    if (isFirestoreOfflineError(error)) {
+      throw new FirestoreConnectionError(
+        'Cloud Firestore est temporairement inaccessible (client hors ligne ou délai dépassé).'
+      );
+    }
     handleFirestoreError(error, OperationType.WRITE, `users/${uid}`);
   }
 }
@@ -180,8 +209,7 @@ export function subscribeToCollection<T>(
       onData(items);
     },
     (error) => {
-      const msg = error instanceof Error ? error.message : String(error);
-      if (msg.includes('the client is offline') || msg.includes('unavailable')) {
+      if (isFirestoreOfflineError(error)) {
         console.warn(`Firestore hors ligne lors de l'écoute de ${collectionName}.`);
         return;
       }
