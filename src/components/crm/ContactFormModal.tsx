@@ -25,6 +25,7 @@ export function ContactFormModal({
   const [fullName, setFullName] = useState('');
   const [jobTitle, setJobTitle] = useState('');
   const [companyId, setCompanyId] = useState(defaultCompanyId ?? '');
+  const [cin, setCin] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [whatsapp, setWhatsapp] = useState('');
@@ -41,6 +42,7 @@ export function ContactFormModal({
       setFullName(initialContact.fullName);
       setJobTitle(initialContact.jobTitle);
       setCompanyId(initialContact.companyId);
+      setCin(initialContact.cin ?? '');
       setEmail(initialContact.email);
       setPhone(initialContact.phone);
       setWhatsapp(initialContact.whatsapp);
@@ -51,6 +53,7 @@ export function ContactFormModal({
       setFullName('');
       setJobTitle('');
       setCompanyId(defaultCompanyId ?? '');
+      setCin('');
       setEmail('');
       setPhone('');
       setWhatsapp('');
@@ -88,6 +91,7 @@ export function ContactFormModal({
         fullName: fullName.trim(),
         jobTitle: jobTitle.trim(),
         companyId,
+        cin: cin.trim(),
         email: email.trim(),
         phone: phone.trim(),
         whatsapp: whatsapp.trim(),
@@ -169,23 +173,39 @@ export function ContactFormModal({
           </div>
         </div>
 
-        <div>
-          <label htmlFor="ct-company" className="block text-xs font-medium text-slate-700 mb-1">
-            Entreprise / Compte affilié
-          </label>
-          <select
-            id="ct-company"
-            value={companyId}
-            onChange={(e) => setCompanyId(e.target.value)}
-            className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
-          >
-            <option value="">Particulier / Indépendant</option>
-            {companies.map((comp) => (
-              <option key={comp.id} value={comp.id}>
-                {comp.legalName}
-              </option>
-            ))}
-          </select>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label htmlFor="ct-company" className="block text-xs font-medium text-slate-700 mb-1">
+              Entreprise / Compte affilié
+            </label>
+            <select
+              id="ct-company"
+              value={companyId}
+              onChange={(e) => setCompanyId(e.target.value)}
+              className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
+            >
+              <option value="">Particulier / Indépendant</option>
+              {companies.map((comp) => (
+                <option key={comp.id} value={comp.id}>
+                  {comp.legalName}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="ct-cin" className="block text-xs font-medium text-slate-700 mb-1">
+              CIN (Carte d&apos;Identité Nationale)
+            </label>
+            <input
+              id="ct-cin"
+              type="text"
+              maxLength={60}
+              value={cin}
+              onChange={(e) => setCin(e.target.value)}
+              placeholder="Ex : 101 251 004 812"
+              className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
+            />
+          </div>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">

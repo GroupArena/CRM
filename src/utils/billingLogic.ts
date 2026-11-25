@@ -193,6 +193,7 @@ export function mergeContactRecords(primary: Contact, duplicate: Contact): Conta
   return {
     ...primary,
     jobTitle: primary.jobTitle || duplicate.jobTitle,
+    cin: primary.cin || duplicate.cin || '',
     phone: primary.phone || duplicate.phone,
     whatsapp: primary.whatsapp || duplicate.whatsapp,
     email: primary.email || duplicate.email,
@@ -407,6 +408,35 @@ export function getDocumentAmountInWordsPrefix(kind: 'quote' | 'invoice'): strin
 
 export function shouldRenderStampAndSignature(kind: 'quote' | 'invoice'): boolean {
   return kind === 'invoice';
+}
+
+export interface ClientFiscalLine {
+  label: 'CIN' | 'NIF' | 'STAT' | 'RCS';
+  value: string;
+}
+
+export function getClientFiscalInfo(
+  company?: Pick<Company, 'legalName' | 'nif' | 'stat' | 'rcs'> | null,
+  contact?: Pick<Contact, 'cin'> | null
+): {
+  isIndividual: boolean;
+  lines: ClientFiscalLine[];
+} {
+  const hasAffiliatedCompany = Boolean(company && company.legalName?.trim());
+  if (!hasAffiliatedCompany) {
+    return {
+      isIndividual: true,
+      lines: [{ label: 'CIN', value: (contact?.cin ?? '').trim() }],
+    };
+  }
+  return {
+    isIndividual: false,
+    lines: [
+      { label: 'NIF', value: (company?.nif ?? '').trim() },
+      { label: 'STAT', value: (company?.stat ?? '').trim() },
+      { label: 'RCS', value: (company?.rcs ?? '').trim() },
+    ],
+  };
 }
 
 export function getInvoiceTotalsDisplaySpec(params: {

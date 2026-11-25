@@ -127,6 +127,7 @@ export interface Contact {
   id: string;
   fullName: string;
   jobTitle: string;
+  cin?: string;
   phone: string;
   whatsapp: string;
   email: string;

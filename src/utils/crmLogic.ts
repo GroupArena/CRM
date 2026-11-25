@@ -9,6 +9,90 @@ import type {
   UserProfile,
 } from '../types';
 
+export const BOOTSTRAPPED_SUPER_ADMIN_EMAILS = [
+  'navalona.rajaonarivelo@gmail.com',
+  'navalona@arenabusinesscenter.com',
+] as const;
+
+export function isBootstrappedSuperAdminEmail(email?: string | null): boolean {
+  if (!email) return false;
+  const normalized = email.trim().toLowerCase();
+  return (BOOTSTRAPPED_SUPER_ADMIN_EMAILS as readonly string[]).includes(normalized);
+}
+
+export interface ResolvedUserProfileResult {
+  needsCreate: boolean;
+  needsUpdate: boolean;
+  profile: UserProfile;
+}
+
+export function resolveBootstrappedUserProfile(
+  uid: string,
+  email: string,
+  displayName: string,
+  existingProfile: UserProfile | null,
+  allEntityIds: string[]
+): ResolvedUserProfileResult {
+  const cleanEmail = email.trim();
+  const isBootstrapped = isBootstrappedSuperAdminEmail(cleanEmail);
+
+  if (!existingProfile) {
+    return {
+      needsCreate: true,
+      needsUpdate: false,
+      profile: {
+        uid,
+        email: cleanEmail,
+        displayName: displayName.trim() || cleanEmail.split('@')[0] || 'Utilisateur',
+        role: isBootstrapped ? 'super_admin' : 'reader',
+        entityIds: isBootstrapped ? [...allEntityIds] : [],
+        active: true,
+        createdAt: '',
+        updatedAt: '',
+      },
+    };
+  }
+
+  if (!isBootstrapped) {
+    return {
+      needsCreate: false,
+      needsUpdate: false,
+      profile: existingProfile,
+    };
+  }
+
+  const existingEntities = Array.isArray(existingProfile.entityIds)
+    ? existingProfile.entityIds
+    : [];
+  const missingEntity = allEntityIds.some((id) => !existingEntities.includes(id));
+  const needsUpdate =
+    existingProfile.role !== 'super_admin' ||
+    !existingProfile.active ||
+    missingEntity;
+
+  if (!needsUpdate) {
+    return {
+      needsCreate: false,
+      needsUpdate: false,
+      profile: existingProfile,
+    };
+  }
+
+  const mergedEntities = Array.from(new Set([...allEntityIds, ...existingEntities]));
+  return {
+    needsCreate: false,
+    needsUpdate: true,
+    profile: {
+      ...existingProfile,
+      uid: existingProfile.uid || uid,
+      email: existingProfile.email || cleanEmail,
+      role: 'super_admin',
+      entityIds: mergedEntities,
+      active: true,
+    },
+  };
+}
+
 export function canViewAllEntities(user: UserProfile | null): boolean {
   if (!user || !user.active) return false;
   return user.role === 'super_admin';
@@ -19,14 +103,36 @@ export function canWriteCrm(user: UserProfile | null): boolean {
   return user.role !== 'reader';
 }
 
+export function isSuperAdminUser(user: UserProfile | null): boolean {
+  return Boolean(user && user.active && user.role === 'super_admin');
+}
+
+export function canManageSettings(user: UserProfile | null): boolean {
+  return isSuperAdminUser(user);
+}
+
 export function canManageUsers(user: UserProfile | null): boolean {
-  if (!user || !user.active) return false;
-  return user.role === 'super_admin' || user.role === 'entity_admin';
+  return isSuperAdminUser(user);
 }
 
 export function canManageEntities(user: UserProfile | null): boolean {
+  return isSuperAdminUser(user);
+}
+
+export function canDeleteUserAccount(
+  actor: UserProfile | null,
+  target: Pick<UserProfile, 'uid'>
+): boolean {
+  return isSuperAdminUser(actor) && Boolean(actor && target.uid !== actor.uid);
+}
+
+export function canDeleteProductRecord(user: UserProfile | null): boolean {
   if (!user || !user.active) return false;
-  return user.role === 'super_admin';
+  return (
+    user.role === 'super_admin' ||
+    user.role === 'entity_admin' ||
+    user.role === 'manager'
+  );
 }
 
 export function canEditProspect(user: UserProfile | null, prospect: Prospect): boolean {

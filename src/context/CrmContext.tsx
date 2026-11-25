@@ -8,7 +8,7 @@ import {
   type User,
 } from 'firebase/auth';
 import { where } from 'firebase/firestore';
-import { auth, googleProvider, isFirebaseConfigured, testFirestoreConnection } from '../firebase';
+import { auth, createAuthUserAsAdmin, googleProvider, isFirebaseConfigured, testFirestoreConnection } from '../firebase';
 import type {
   AuditLog,
   Company,
@@ -47,6 +47,7 @@ import type {
   ServiceRequest,
   ToastMessage,
   UserProfile,
+  UserRole,
 } from '../types';
 import {
   DEFAULT_ENTITIES,
@@ -83,8 +84,10 @@ import {
   allocateDocumentNumberFirestore,
   appendAuditLog,
   buildEntityConstraints,
+  createUserDoc,
   deleteCollectionDoc,
   deleteProspectDoc,
+  deleteUserDoc,
   ensureUserProfile,
   markNotificationReadDoc,
   recordPaymentAndUpdateInvoice,
@@ -114,6 +117,9 @@ import {
   updateUserDoc,
 } from '../services/firestoreService';
 import {
+  canDeleteProductRecord,
+  canDeleteUserAccount,
+  canManageSettings,
   canViewAllEntities,
   filterActionsByScope,
   filterDealsByScope,
@@ -187,6 +193,14 @@ export interface PaymentInputPayload {
   paymentMethod: PaymentMethod;
   reference: string;
   notes: string;
+}
+
+export interface CreateManagedUserPayload {
+  email: string;
+  displayName: string;
+  password: string;
+  role: UserRole;
+  entityIds: string[];
 }
 
 interface CrmContextValue {
@@ -324,7 +338,10 @@ interface CrmContextValue {
   saveLegalSetting: (legal: LegalSetting, isNew: boolean) => Promise<void>;
   saveEntity: (entity: CrmEntity, isNew: boolean) => Promise<void>;
   saveUser: (user: UserProfile) => Promise<void>;
+  createManagedUser: (payload: CreateManagedUserPayload) => Promise<UserProfile>;
+  deleteUser: (uid: string) => Promise<void>;
   saveTag: (tag: CrmTag, isNew: boolean) => Promise<void>;
+  deleteTag: (tagId: string) => Promise<void>;
   saveSettings: (nextSettings: CrmSettings) => Promise<void>;
   seedFirestore: () => Promise<void>;
 }
@@ -622,8 +639,10 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       buildEntityConstraints(field, currentUser, selectedEntityId);
 
     const unsubs = [
-      subscribeToCollection<CrmEntity>('entities', [where('active', '==', true)], (items) =>
-        setEntities(items.length > 0 ? items : DEFAULT_ENTITIES)
+      subscribeToCollection<CrmEntity>(
+        'entities',
+        isSuperAdminUser ? [] : [where('active', '==', true)],
+        (items) => setEntities(items.length > 0 ? items : DEFAULT_ENTITIES)
       ),
       subscribeToCollection<UserProfile>(
         'users',
@@ -1750,6 +1769,15 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteProduct = async (productId: string) => {
+    if (!canDeleteProductRecord(currentUser)) {
+      addToast({
+        type: 'error',
+        title: 'Suppression non autorisée',
+        description: 'Droits insuffisants pour supprimer un produit du catalogue.',
+      });
+      return;
+    }
+    const target = products.find((p) => p.id === productId);
     if (authMode === 'demo') {
       persistDemoState((prev) => ({
         ...prev,
@@ -1757,6 +1785,15 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       }));
     } else {
       await deleteCollectionDoc('products', productId);
+    }
+    if (target) {
+      await recordLog(
+        defaultEntityScopeId(),
+        'product_deleted',
+        'product',
+        productId,
+        `Produit supprimé du catalogue : ${target.name}.`
+      );
     }
     addToast({ type: 'info', title: 'Produit supprimé du catalogue' });
   };
@@ -2470,7 +2507,18 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     addToast({ type: 'success', title: 'Évaluation de satisfaction enregistrée' });
   };
 
+  const assertSuperAdminSettings = (): boolean => {
+    if (canManageSettings(currentUser)) return true;
+    addToast({
+      type: 'error',
+      title: 'Accès réservé aux Super Admins',
+      description: 'Seul un Super Admin peut modifier les paramètres.',
+    });
+    return false;
+  };
+
   const saveIntegration = async (integration: IntegrationSetting, isNew: boolean) => {
+    if (!assertSuperAdminSettings()) return;
     const payload = { ...integration, updatedAt: new Date().toISOString() };
     if (authMode === 'demo') {
       persistDemoState((prev) => ({
@@ -2486,6 +2534,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
   };
 
   const saveLegalSetting = async (legal: LegalSetting, isNew: boolean) => {
+    if (!assertSuperAdminSettings()) return;
     const payload = { ...legal, updatedAt: new Date().toISOString() };
     if (authMode === 'demo') {
       persistDemoState((prev) => ({
@@ -2501,6 +2550,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
   };
 
   const saveEntity = async (entity: CrmEntity, isNew: boolean) => {
+    if (!assertSuperAdminSettings()) return;
     const now = new Date().toISOString();
     const payload = { ...entity, updatedAt: now, createdAt: isNew ? now : entity.createdAt };
     if (authMode === 'demo') {
@@ -2517,6 +2567,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
   };
 
   const saveUser = async (user: UserProfile) => {
+    if (!assertSuperAdminSettings()) return;
     const updated = { ...user, updatedAt: new Date().toISOString() };
     if (authMode === 'demo') {
       persistDemoState((prev) => ({
@@ -2529,7 +2580,118 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     addToast({ type: 'success', title: 'Rôle et accès enregistrés', description: user.displayName });
   };
 
+  const createManagedUser = async (payload: CreateManagedUserPayload): Promise<UserProfile> => {
+    if (!canManageSettings(currentUser)) {
+      throw new Error('Seul un Super Admin peut ajouter un utilisateur.');
+    }
+    const cleanEmail = payload.email.trim().toLowerCase();
+    const cleanName = payload.displayName.trim();
+    if (!cleanName) throw new Error('Le nom complet est obligatoire.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      throw new Error("L'adresse email est invalide.");
+    }
+    if (authMode === 'firebase' && payload.password.length < 6) {
+      throw new Error('Le mot de passe doit contenir au moins 6 caractères.');
+    }
+    if (users.some((u) => u.email.trim().toLowerCase() === cleanEmail)) {
+      throw new Error('Un utilisateur avec cette adresse email existe déjà.');
+    }
+
+    const assignedEntities =
+      payload.role === 'super_admin'
+        ? entities.map((e) => e.id)
+        : payload.entityIds;
+
+    let uid = `u-demo-${Date.now()}`;
+    if (authMode === 'firebase') {
+      try {
+        const created = await createAuthUserAsAdmin(cleanEmail, payload.password, cleanName);
+        uid = created.uid;
+      } catch (err) {
+        const code = (err as { code?: string })?.code ?? '';
+        if (code === 'auth/email-already-in-use') {
+          throw new Error('Cette adresse email est déjà enregistrée dans Firebase Auth.');
+        }
+        if (code === 'auth/weak-password') {
+          throw new Error('Mot de passe trop faible (6 caractères minimum).');
+        }
+        if (code === 'auth/invalid-email') {
+          throw new Error('Adresse email invalide.');
+        }
+        throw err instanceof Error ? err : new Error("Impossible de créer le compte utilisateur.");
+      }
+    }
+
+    const now = new Date().toISOString();
+    const newUser: UserProfile = {
+      uid,
+      email: cleanEmail,
+      displayName: cleanName,
+      role: payload.role,
+      entityIds: assignedEntities,
+      active: true,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    if (authMode === 'demo') {
+      persistDemoState((prev) => ({
+        ...prev,
+        users: [newUser, ...prev.users],
+      }));
+    } else {
+      await createUserDoc(newUser);
+    }
+
+    await recordLog(
+      defaultEntityScopeId(),
+      'user_created',
+      'user',
+      newUser.uid,
+      `Utilisateur ajouté : ${newUser.displayName} (${newUser.email}, ${newUser.role}).`
+    );
+    addToast({
+      type: 'success',
+      title: 'Utilisateur ajouté',
+      description: `${newUser.displayName} (${newUser.email})`,
+    });
+    return newUser;
+  };
+
+  const deleteUser = async (uid: string) => {
+    const target = users.find((u) => u.uid === uid);
+    if (!target || !canDeleteUserAccount(currentUser, target)) {
+      addToast({
+        type: 'error',
+        title: 'Suppression refusée',
+        description: 'Action réservée aux Super Admins (auto-suppression impossible).',
+      });
+      return;
+    }
+    if (authMode === 'demo') {
+      persistDemoState((prev) => ({
+        ...prev,
+        users: prev.users.filter((u) => u.uid !== uid),
+      }));
+    } else {
+      await deleteUserDoc(uid);
+    }
+    await recordLog(
+      defaultEntityScopeId(),
+      'user_deleted',
+      'user',
+      uid,
+      `Utilisateur supprimé : ${target.displayName} (${target.email}).`
+    );
+    addToast({
+      type: 'info',
+      title: 'Utilisateur supprimé',
+      description: target.displayName,
+    });
+  };
+
   const saveTag = async (tag: CrmTag, isNew: boolean) => {
+    if (!assertSuperAdminSettings()) return;
     const now = new Date().toISOString();
     const payload = { ...tag, updatedAt: now, createdAt: isNew ? now : tag.createdAt };
     if (authMode === 'demo') {
@@ -2542,10 +2704,29 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     } else {
       await saveTagDoc(payload, isNew);
     }
-    addToast({ type: 'success', title: 'Tag enregistré' });
+    addToast({ type: 'success', title: isNew ? 'Tag créé' : 'Tag mis à jour' });
+  };
+
+  const deleteTag = async (tagId: string) => {
+    if (!assertSuperAdminSettings()) return;
+    const target = tags.find((t) => t.id === tagId);
+    if (authMode === 'demo') {
+      persistDemoState((prev) => ({
+        ...prev,
+        tags: prev.tags.filter((t) => t.id !== tagId),
+      }));
+    } else {
+      await deleteCollectionDoc('tags', tagId);
+    }
+    addToast({
+      type: 'info',
+      title: 'Tag supprimé',
+      description: target?.name,
+    });
   };
 
   const saveSettings = async (nextSettings: CrmSettings) => {
+    if (!assertSuperAdminSettings()) return;
     const updated = {
       ...nextSettings,
       updatedByUid: currentUser?.uid ?? 'system',
@@ -2562,6 +2743,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
   };
 
   const seedFirestore = async () => {
+    if (!assertSuperAdminSettings()) return;
     if (authMode === 'demo') {
       const fresh = createInitialDemoState();
       localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(fresh));
@@ -2704,7 +2886,10 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         saveLegalSetting,
         saveEntity,
         saveUser,
+        createManagedUser,
+        deleteUser,
         saveTag,
+        deleteTag,
         saveSettings,
         seedFirestore,
       }}

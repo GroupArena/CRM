@@ -1,13 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  canDeleteProductRecord,
   canDeleteProspect,
+  canDeleteUserAccount,
   canEditProspect,
+  canManageEntities,
+  canManageSettings,
+  canManageUsers,
   canViewAllEntities,
   computeDashboardKpis,
   filterProspectsByScope,
   formatCurrency,
   getAuthorizedEntities,
+  isBootstrappedSuperAdminEmail,
+  resolveBootstrappedUserProfile,
   resolveEffectiveActionStatus,
   setActiveDefaultCurrency,
   validateActionInput,
@@ -244,3 +251,105 @@ test('Currency formatting supports MGA (Ar) as default out of the box', () => {
 
   setActiveDefaultCurrency('MGA');
 });
+
+test('Bootstrapped Super Admin detection and existing reader profile promotion', () => {
+  assert.equal(isBootstrappedSuperAdminEmail('navalona@arenabusinesscenter.com'), true);
+  assert.equal(isBootstrappedSuperAdminEmail('  Navalona.Rajaonarivelo@gmail.com '), true);
+  assert.equal(isBootstrappedSuperAdminEmail('collaborateur@arenabusinesscenter.com'), false);
+  assert.equal(isBootstrappedSuperAdminEmail(null), false);
+
+  const entityIds = ['arena-business-center', 'improveo', 'arena-studio-comm', 'maison-artisanat'];
+
+  const freshAdmin = resolveBootstrappedUserProfile(
+    'uid-1',
+    'navalona@arenabusinesscenter.com',
+    'Navalona',
+    null,
+    entityIds
+  );
+  assert.equal(freshAdmin.needsCreate, true);
+  assert.equal(freshAdmin.needsUpdate, false);
+  assert.equal(freshAdmin.profile.role, 'super_admin');
+  assert.deepEqual(freshAdmin.profile.entityIds, entityIds);
+
+  const freshStandard = resolveBootstrappedUserProfile(
+    'uid-2',
+    'sales@arenabusinesscenter.com',
+    '',
+    null,
+    entityIds
+  );
+  assert.equal(freshStandard.needsCreate, true);
+  assert.equal(freshStandard.profile.role, 'reader');
+  assert.deepEqual(freshStandard.profile.entityIds, []);
+
+  const staleReaderAdmin: UserProfile = {
+    uid: 'uid-1',
+    email: 'navalona@arenabusinesscenter.com',
+    displayName: 'Navalona',
+    role: 'reader',
+    entityIds: [],
+    active: false,
+    createdAt: '2026-11-20T00:00:00Z',
+    updatedAt: '2026-11-20T00:00:00Z',
+  };
+  const promoted = resolveBootstrappedUserProfile(
+    'uid-1',
+    'navalona@arenabusinesscenter.com',
+    'Navalona',
+    staleReaderAdmin,
+    entityIds
+  );
+  assert.equal(promoted.needsCreate, false);
+  assert.equal(promoted.needsUpdate, true);
+  assert.equal(promoted.profile.role, 'super_admin');
+  assert.equal(promoted.profile.active, true);
+  assert.deepEqual(promoted.profile.entityIds, entityIds);
+
+  const alreadyAdmin = resolveBootstrappedUserProfile(
+    'uid-1',
+    'navalona@arenabusinesscenter.com',
+    'Navalona',
+    promoted.profile,
+    entityIds
+  );
+  assert.equal(alreadyAdmin.needsCreate, false);
+  assert.equal(alreadyAdmin.needsUpdate, false);
+
+  const nonAdminExisting = resolveBootstrappedUserProfile(
+    'uid-3',
+    'user@improveo.fr',
+    'User',
+    { ...READER_USER, uid: 'uid-3', email: 'user@improveo.fr' },
+    entityIds
+  );
+  assert.equal(nonAdminExisting.needsUpdate, false);
+  assert.equal(nonAdminExisting.profile.role, 'reader');
+});
+
+test('Settings, entity/user/tag management and user deletion are restricted to active Super Admins', () => {
+  const entityAdmin: UserProfile = { ...SALES_IMPROVEO, uid: 'u-ea', role: 'entity_admin' };
+  const manager: UserProfile = { ...SALES_IMPROVEO, uid: 'u-mgr', role: 'manager' };
+  const inactiveAdmin: UserProfile = { ...SUPER_ADMIN, active: false };
+
+  assert.equal(canManageSettings(SUPER_ADMIN), true);
+  assert.equal(canManageUsers(SUPER_ADMIN), true);
+  assert.equal(canManageEntities(SUPER_ADMIN), true);
+
+  for (const nonSuper of [entityAdmin, manager, SALES_IMPROVEO, READER_USER, inactiveAdmin, null]) {
+    assert.equal(canManageSettings(nonSuper), false);
+    assert.equal(canManageUsers(nonSuper), false);
+    assert.equal(canManageEntities(nonSuper), false);
+  }
+
+  assert.equal(canDeleteUserAccount(SUPER_ADMIN, SALES_IMPROVEO), true);
+  assert.equal(canDeleteUserAccount(SUPER_ADMIN, SUPER_ADMIN), false);
+  assert.equal(canDeleteUserAccount(entityAdmin, SALES_IMPROVEO), false);
+
+  assert.equal(canDeleteProductRecord(SUPER_ADMIN), true);
+  assert.equal(canDeleteProductRecord(entityAdmin), true);
+  assert.equal(canDeleteProductRecord(manager), true);
+  assert.equal(canDeleteProductRecord(SALES_IMPROVEO), false);
+  assert.equal(canDeleteProductRecord(READER_USER), false);
+});
+

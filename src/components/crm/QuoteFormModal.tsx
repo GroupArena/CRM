@@ -120,8 +120,10 @@ export function QuoteFormModal({
       const today = new Date().toISOString().slice(0, 10);
       const legal = legalSettings.find((l) => l.entityId === resolvedEntity);
       setEntityId(resolvedEntity);
-      setContactId(defaultContactId || contacts[0]?.id || '');
-      setCompanyId(defaultCompanyId || contacts[0]?.companyId || '');
+      const initialCid = defaultContactId || contacts[0]?.id || '';
+      const initialCt = contacts.find((c) => c.id === initialCid);
+      setContactId(initialCid);
+      setCompanyId(defaultCompanyId !== undefined ? defaultCompanyId : (initialCt?.companyId ?? ''));
       setOpportunityId(defaultOpportunityId || '');
       setStatus('Envoyé');
       setIssueDate(today);
@@ -377,7 +379,7 @@ export function QuoteFormModal({
                 const cid = e.target.value;
                 setContactId(cid);
                 const ct = contacts.find((c) => c.id === cid);
-                if (ct?.companyId) setCompanyId(ct.companyId);
+                setCompanyId(ct?.companyId ?? '');
               }}
               className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
             >

@@ -5,6 +5,7 @@ import {
   Package,
   ExternalLink,
   Edit2,
+  Trash2,
   Eye,
   Layers,
   Repeat,
@@ -23,6 +24,7 @@ import {
 import { computeProductMargin } from '../utils/billingLogic';
 import { formatCurrency } from '../utils/crmLogic';
 import { EmptyState } from '../components/ui/EmptyState';
+import { Modal } from '../components/ui/Modal';
 import { ProductFormModal } from '../components/crm/ProductFormModal';
 
 function formatBillingBadge(product: Product): string {
@@ -41,8 +43,8 @@ function formatBillingBadge(product: Product): string {
 }
 
 export function ProductsPage() {
-  const { products, authorizedEntities, entities, globalSearch, settings } = useCrm();
-  const { canWriteCrm } = useAuth();
+  const { products, authorizedEntities, entities, globalSearch, settings, deleteProduct } = useCrm();
+  const { canWriteCrm, canDeleteProduct } = useAuth();
 
   const [entityFilter, setEntityFilter] = useState('all');
   const [folderFilter, setFolderFilter] = useState('all');
@@ -51,6 +53,8 @@ export function ProductsPage() {
   const [localSearch, setLocalSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [confirmDeleteProduct, setConfirmDeleteProduct] = useState<Product | null>(null);
+  const [deletingProduct, setDeletingProduct] = useState(false);
   const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
 
   const folders = useMemo(
@@ -383,6 +387,17 @@ export function ProductsPage() {
                               <Edit2 className="h-4 w-4" />
                             </button>
                           )}
+                          {canDeleteProduct && (
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDeleteProduct(p)}
+                              aria-label={`Supprimer ${p.name}`}
+                              title="Supprimer"
+                              className="p-1.5 rounded text-slate-500 hover:bg-red-50 hover:text-red-700"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -399,6 +414,53 @@ export function ProductsPage() {
         onClose={() => setModalOpen(false)}
         initialProduct={editingProduct}
       />
+
+      <Modal
+        open={Boolean(confirmDeleteProduct)}
+        onClose={() => {
+          if (!deletingProduct) setConfirmDeleteProduct(null);
+        }}
+        title="Supprimer ce produit / service ?"
+        subtitle={
+          confirmDeleteProduct
+            ? `${confirmDeleteProduct.name}${confirmDeleteProduct.sku ? ` (${confirmDeleteProduct.sku})` : ''}`
+            : undefined
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            Cette action supprimera définitivement cette référence du catalogue Produits &amp; Services.
+            Les devis et factures déjà émis conservent leurs lignes enregistrées.
+          </p>
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
+            <button
+              type="button"
+              disabled={deletingProduct}
+              onClick={() => setConfirmDeleteProduct(null)}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Annuler
+            </button>
+            <button
+              type="button"
+              disabled={deletingProduct || !confirmDeleteProduct}
+              onClick={async () => {
+                if (!confirmDeleteProduct) return;
+                setDeletingProduct(true);
+                try {
+                  await deleteProduct(confirmDeleteProduct.id);
+                  setConfirmDeleteProduct(null);
+                } finally {
+                  setDeletingProduct(false);
+                }
+              }}
+              className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+            >
+              {deletingProduct ? 'Suppression...' : 'Confirmer la suppression'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

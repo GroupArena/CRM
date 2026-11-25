@@ -38,6 +38,7 @@ export function ContactsPage() {
       const comp = companies.find((co) => co.id === c.companyId);
       return (
         c.fullName.toLowerCase().includes(q) ||
+        (c.cin ?? '').toLowerCase().includes(q) ||
         c.email.toLowerCase().includes(q) ||
         c.phone.toLowerCase().includes(q) ||
         c.whatsapp.toLowerCase().includes(q) ||
@@ -104,7 +105,7 @@ export function ContactsPage() {
             aria-label="Rechercher un contact"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Rechercher par nom, email, téléphone, WhatsApp, entreprise..."
+            placeholder="Rechercher par nom, CIN, email, téléphone, WhatsApp, entreprise..."
             className="w-full h-9 rounded-lg border border-slate-200 pl-9 pr-3 text-sm focus:border-[#C9A125] focus:outline-none"
           />
         </div>
@@ -163,7 +164,14 @@ export function ContactsPage() {
                             {getCompanyName(c.companyId)}
                           </Link>
                         ) : (
-                          <span className="text-slate-500">Particulier</span>
+                          <div>
+                            <span className="text-slate-600 font-medium">Particulier</span>
+                            {c.cin && (
+                              <div className="text-[11px] font-sans tabular-nums text-slate-500 mt-0.5">
+                                CIN : {c.cin}
+                              </div>
+                            )}
+                          </div>
                         )}
                       </td>
                       <td className="py-3 px-4 text-xs text-slate-600 space-y-0.5">

@@ -14,6 +14,7 @@ import { formatCurrency, formatDateFr } from './crmLogic';
 import { getBrandLogoPath, getEntityInvoiceTheme, resolveAssetUrl } from './branding';
 import {
   computeEuroConversion,
+  getClientFiscalInfo,
   getDocumentAmountInWordsPrefix,
   getInvoiceTotalsDisplaySpec,
   shouldRenderStampAndSignature,
@@ -291,7 +292,9 @@ export async function buildArenaA4Pdf(
 
   // --- 2. Load entity light logo + Signature & Tampon ---
   const includeStampAndSignature = shouldRenderStampAndSignature(input.kind);
-  const logoSrc = getBrandLogoPath(ctx.entity?.id ?? input.entityId ?? 'group', 'light');
+  const logoSrc =
+    ctx.entity?.logoUrl?.trim() ||
+    getBrandLogoPath(ctx.entity?.id ?? input.entityId ?? 'group', 'light');
   const [logoData, stampData, signatureData] = await Promise.all([
     loadImageAsDataUrl(logoSrc),
     includeStampAndSignature ? loadImageAsDataUrl(ctx.legal?.stampImageUrl) : Promise.resolve(null),
@@ -372,12 +375,11 @@ export async function buildArenaA4Pdf(
     doc.text(cityCountry, 14, clientY);
     clientY += 4;
   }
-  doc.text(`NIF: ${ctx.company?.nif || ''}`, 14, clientY);
-  clientY += 4;
-  doc.text(`STAT: ${ctx.company?.stat || ''}`, 14, clientY);
-  clientY += 4;
-  doc.text(`RCS: ${ctx.company?.rcs || ''}`, 14, clientY);
-  clientY += 4;
+  const clientFiscal = getClientFiscalInfo(ctx.company, ctx.contact);
+  for (const fiscalLine of clientFiscal.lines) {
+    doc.text(`${fiscalLine.label}: ${fiscalLine.value}`, 14, clientY);
+    clientY += 4;
+  }
 
   const clientPhone = ctx.company?.phone || ctx.contact?.phone || '';
   const clientEmail = ctx.company?.email || ctx.contact?.email || '';

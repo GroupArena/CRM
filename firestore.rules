@@ -148,13 +148,14 @@ service cloud.firestore {
     function isValidContact(data) {
       return data.keys().hasAll(['id', 'fullName', 'isVip', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly([
-          'id', 'fullName', 'jobTitle', 'phone', 'whatsapp', 'email', 'companyId',
+          'id', 'fullName', 'jobTitle', 'cin', 'phone', 'whatsapp', 'email', 'companyId',
           'isVip', 'tags', 'consentMarketing', 'gdprConsentDate', 'notes',
           'createdAt', 'updatedAt'
         ])
         && isValidId(data.id)
         && isValidString(data.fullName, 1, 160)
         && (!('jobTitle' in data) || isValidString(data.jobTitle, 0, 120))
+        && (!('cin' in data) || isValidString(data.cin, 0, 60))
         && (!('phone' in data) || isValidString(data.phone, 0, 40))
         && (!('whatsapp' in data) || isValidString(data.whatsapp, 0, 40))
         && (!('email' in data) || isValidString(data.email, 0, 200))
@@ -732,7 +733,6 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (
           isSuperAdmin() ||
-          (isEntityAdmin() && existing().role != 'super_admin' && incoming().role in ['entity_admin', 'manager', 'sales', 'reader'] && incoming().entityIds.hasOnly(userEntityIds())) ||
           (request.auth.uid == userId && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'updatedAt']))
         );
       allow delete: if isSuperAdmin() && isValidId(userId);
@@ -741,7 +741,7 @@ service cloud.firestore {
     // --- Collection: entities ---
     match /entities/{entityId} {
       allow get: if isActiveUser() && isValidId(entityId) && (isSuperAdmin() || entityId in userEntityIds());
-      allow list: if isActiveUser() && resource.data.active == true;
+      allow list: if isActiveUser() && (resource.data.active == true || isSuperAdmin());
       allow create: if isSuperAdmin() && isValidId(entityId) && isValidEntity(incoming())
         && incoming().id == entityId && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isSuperAdmin() && isValidId(entityId) && isValidEntity(incoming())
@@ -835,7 +835,7 @@ service cloud.firestore {
         && incoming().id == productId && incoming().createdAt == request.time && incoming().updatedAt == request.time;
       allow update: if isManagerOrAbove() && isValidId(productId) && isValidProduct(incoming())
         && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
-      allow delete: if isSuperAdmin() && isValidId(productId);
+      allow delete: if isManagerOrAbove() && isValidId(productId);
     }
 
     // --- Collection: prospects ---
@@ -1026,9 +1026,8 @@ service cloud.firestore {
     match /integrations/{integrationId} {
       allow get: if isActiveUser() && isValidId(integrationId) && hasEntityAccess(existing().entityId);
       allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
-      allow create, update: if isManagerOrAbove() && isValidId(integrationId) && isValidIntegration(incoming())
-        && incoming().id == integrationId && incoming().updatedAt == request.time
-        && hasEntityAccess(incoming().entityId);
+      allow create, update: if isSuperAdmin() && isValidId(integrationId) && isValidIntegration(incoming())
+        && incoming().id == integrationId && incoming().updatedAt == request.time;
       allow delete: if isSuperAdmin() && isValidId(integrationId);
     }
 
@@ -1044,9 +1043,8 @@ service cloud.firestore {
     match /legalSettings/{legalId} {
       allow get: if isActiveUser() && isValidId(legalId) && hasEntityAccess(existing().entityId);
       allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
-      allow create, update: if isManagerOrAbove() && isValidId(legalId) && isValidLegalSetting(incoming())
-        && incoming().id == legalId && incoming().updatedAt == request.time
-        && hasEntityAccess(incoming().entityId);
+      allow create, update: if isSuperAdmin() && isValidId(legalId) && isValidLegalSetting(incoming())
+        && incoming().id == legalId && incoming().updatedAt == request.time;
       allow delete: if isSuperAdmin() && isValidId(legalId);
     }
 
@@ -1054,35 +1052,31 @@ service cloud.firestore {
     match /pipelines/{pipelineId} {
       allow get: if isActiveUser() && isValidId(pipelineId) && hasEntityAccess(existing().entityId);
       allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
-      allow create: if isManagerOrAbove() && isValidId(pipelineId) && isValidPipeline(incoming())
-        && incoming().id == pipelineId && incoming().createdAt == request.time && incoming().updatedAt == request.time
-        && hasEntityAccess(incoming().entityId);
-      allow update: if isManagerOrAbove() && isValidId(pipelineId) && isValidPipeline(incoming())
-        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time
-        && hasEntityAccess(existing().entityId);
+      allow create: if isSuperAdmin() && isValidId(pipelineId) && isValidPipeline(incoming())
+        && incoming().id == pipelineId && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isSuperAdmin() && isValidId(pipelineId) && isValidPipeline(incoming())
+        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
       allow delete: if isSuperAdmin() && isValidId(pipelineId);
     }
 
     match /pipelineStages/{stageId} {
       allow get: if isActiveUser() && isValidId(stageId) && hasEntityAccess(existing().entityId);
       allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
-      allow create: if isManagerOrAbove() && isValidId(stageId) && isValidPipelineStage(incoming())
-        && incoming().id == stageId && incoming().createdAt == request.time && incoming().updatedAt == request.time
-        && hasEntityAccess(incoming().entityId);
-      allow update: if isManagerOrAbove() && isValidId(stageId) && isValidPipelineStage(incoming())
-        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time
-        && hasEntityAccess(existing().entityId);
+      allow create: if isSuperAdmin() && isValidId(stageId) && isValidPipelineStage(incoming())
+        && incoming().id == stageId && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow update: if isSuperAdmin() && isValidId(stageId) && isValidPipelineStage(incoming())
+        && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
       allow delete: if isSuperAdmin() && isValidId(stageId);
     }
 
     match /tags/{tagId} {
       allow get: if isActiveUser() && isValidId(tagId);
       allow list: if isActiveUser() && (resource.data.entityId == 'group' || resource.data.entityId in userEntityIds() || isBootstrappedSuperAdmin());
-      allow create: if canWriteCrmData() && isValidId(tagId) && isValidTag(incoming())
+      allow create: if isSuperAdmin() && isValidId(tagId) && isValidTag(incoming())
         && incoming().id == tagId && incoming().createdAt == request.time && incoming().updatedAt == request.time;
-      allow update: if isManagerOrAbove() && isValidId(tagId) && isValidTag(incoming())
+      allow update: if isSuperAdmin() && isValidId(tagId) && isValidTag(incoming())
         && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
-      allow delete: if isManagerOrAbove() && isValidId(tagId);
+      allow delete: if isSuperAdmin() && isValidId(tagId);
     }
 
     match /auditLogs/{logId} {
@@ -1098,7 +1092,7 @@ service cloud.firestore {
     match /settings/{settingId} {
       allow get: if isActiveUser() && isValidId(settingId);
       allow list: if isActiveUser() && (resource.data.scope == 'global' || resource.data.scope in userEntityIds() || isBootstrappedSuperAdmin());
-      allow create, update: if isManagerOrAbove() && isValidId(settingId) && isValidSetting(incoming())
+      allow create, update: if isSuperAdmin() && isValidId(settingId) && isValidSetting(incoming())
         && incoming().id == settingId && incoming().updatedByUid == request.auth.uid && incoming().updatedAt == request.time;
       allow delete: if isSuperAdmin() && isValidId(settingId);
     }

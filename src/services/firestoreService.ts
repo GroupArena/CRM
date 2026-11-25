@@ -79,6 +79,7 @@ import {
   DEMO_SERVICE_REQUESTS,
 } from './seedData';
 import { formatDocumentNumber } from '../utils/billingLogic';
+import { resolveBootstrappedUserProfile } from '../utils/crmLogic';
 
 function toIsoString(value: unknown): string {
   if (!value) return '';
@@ -107,28 +108,57 @@ export async function ensureUserProfile(
 ): Promise<UserProfile> {
   if (!db) throw new Error('Firestore non initialisé.');
   const userRef = doc(db, 'users', uid);
+  const allEntityIds = DEFAULT_ENTITIES.map((e) => e.id);
   try {
     const snap = await getDoc(userRef);
-    if (snap.exists()) {
-      return normalizeDoc<UserProfile>(snap.id, snap.data());
-    }
-    const isBootstrappedAdmin =
-      email.toLowerCase() === 'navalona.rajaonarivelo@gmail.com';
-    const profilePayload = {
+    const existing = snap.exists()
+      ? normalizeDoc<UserProfile>(snap.id, snap.data())
+      : null;
+    const resolved = resolveBootstrappedUserProfile(
       uid,
       email,
-      displayName: displayName || email.split('@')[0] || 'Utilisateur',
-      role: isBootstrappedAdmin ? 'super_admin' : 'reader',
-      entityIds: isBootstrappedAdmin
-        ? DEFAULT_ENTITIES.map((e) => e.id)
-        : [],
-      active: true,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-    await setDoc(userRef, profilePayload);
-    const createdSnap = await getDoc(userRef);
-    return normalizeDoc<UserProfile>(createdSnap.id, createdSnap.data() ?? {});
+      displayName,
+      existing,
+      allEntityIds
+    );
+
+    if (resolved.needsCreate) {
+      const profilePayload = {
+        uid: resolved.profile.uid,
+        email: resolved.profile.email,
+        displayName: resolved.profile.displayName,
+        role: resolved.profile.role,
+        entityIds: resolved.profile.entityIds,
+        active: resolved.profile.active,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+      await setDoc(userRef, profilePayload);
+      const createdSnap = await getDoc(userRef);
+      return normalizeDoc<UserProfile>(createdSnap.id, createdSnap.data() ?? {});
+    }
+
+    if (resolved.needsUpdate) {
+      try {
+        await updateDoc(userRef, {
+          role: resolved.profile.role,
+          entityIds: resolved.profile.entityIds,
+          active: resolved.profile.active,
+          updatedAt: serverTimestamp(),
+        });
+        const updatedSnap = await getDoc(userRef);
+        if (updatedSnap.exists()) {
+          return normalizeDoc<UserProfile>(updatedSnap.id, updatedSnap.data());
+        }
+      } catch (syncError) {
+        console.warn(
+          'Impossible de mettre à jour le document users/{uid} existant, utilisation du profil Super Admin résolu :',
+          syncError
+        );
+      }
+    }
+
+    return resolved.profile;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `users/${uid}`);
   }
@@ -231,7 +261,14 @@ export const saveCompanyDoc = (company: Company, isNew: boolean) =>
   saveStandardDoc('companies', company, isNew);
 
 export const saveContactDoc = (contact: Contact, isNew: boolean) =>
-  saveStandardDoc('contacts', contact, isNew);
+  saveStandardDoc(
+    'contacts',
+    {
+      ...contact,
+      cin: (contact.cin ?? '').trim(),
+    },
+    isNew
+  );
 
 export const saveLeadDoc = (lead: Lead, isNew: boolean) =>
   saveStandardDoc('leads', lead, isNew);
@@ -568,6 +605,21 @@ export const saveDealDoc = (deal: Deal, isNew: boolean) =>
 export const saveEntityDoc = (entity: CrmEntity, isNew: boolean) =>
   saveStandardDoc('entities', entity, isNew);
 
+export async function createUserDoc(user: UserProfile): Promise<void> {
+  if (!db) throw new Error('Firestore non initialisé.');
+  const ref = doc(db, 'users', user.uid);
+  const { createdAt: _c, updatedAt: _u, ...rest } = user;
+  try {
+    await setDoc(ref, {
+      ...rest,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, `users/${user.uid}`);
+  }
+}
+
 export async function updateUserDoc(user: UserProfile): Promise<void> {
   if (!db) throw new Error('Firestore non initialisé.');
   const ref = doc(db, 'users', user.uid);
@@ -580,6 +632,10 @@ export async function updateUserDoc(user: UserProfile): Promise<void> {
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
   }
+}
+
+export async function deleteUserDoc(uid: string): Promise<void> {
+  return deleteCollectionDoc('users', uid);
 }
 
 export const saveTagDoc = (tag: CrmTag, isNew: boolean) =>

@@ -241,6 +241,10 @@ export function ContactDetailPage() {
               <dd className="font-sans tabular-nums text-slate-900">{contact.whatsapp || '—'}</dd>
             </div>
             <div>
+              <dt className="text-xs text-slate-500">CIN</dt>
+              <dd className="font-sans tabular-nums text-slate-900">{contact.cin || '—'}</dd>
+            </div>
+            <div>
               <dt className="text-xs text-slate-500">Consentement marketing RGPD</dt>
               <dd className="text-slate-800">
                 {contact.consentMarketing

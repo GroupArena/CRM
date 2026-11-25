@@ -1,5 +1,13 @@
-import { initializeApp, type FirebaseApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, type Auth } from 'firebase/auth';
+import { deleteApp, initializeApp, type FirebaseApp } from 'firebase/app';
+import {
+  createUserWithEmailAndPassword,
+  getAuth,
+  GoogleAuthProvider,
+  sendEmailVerification,
+  signOut,
+  updateProfile,
+  type Auth,
+} from 'firebase/auth';
 import {
   getFirestore,
   initializeFirestore,
@@ -155,5 +163,48 @@ export async function testFirestoreConnection(): Promise<boolean> {
       return false;
     }
     return true;
+  }
+}
+
+export async function createAuthUserAsAdmin(
+  email: string,
+  password: string,
+  displayName: string
+): Promise<{ uid: string }> {
+  if (!isFirebaseConfigured) {
+    throw new Error('Firebase Auth non configuré.');
+  }
+  const secondaryName = `arena-admin-create-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+  const secondaryApp = initializeApp(
+    {
+      apiKey: firebaseConfig.apiKey,
+      authDomain: firebaseConfig.authDomain,
+      projectId: firebaseConfig.projectId,
+      storageBucket: firebaseConfig.storageBucket,
+      messagingSenderId: firebaseConfig.messagingSenderId,
+      appId: firebaseConfig.appId,
+    },
+    secondaryName
+  );
+  const secondaryAuth = getAuth(secondaryApp);
+  try {
+    const credential = await createUserWithEmailAndPassword(
+      secondaryAuth,
+      email.trim(),
+      password
+    );
+    if (displayName.trim()) {
+      await updateProfile(credential.user, { displayName: displayName.trim() });
+    }
+    try {
+      await sendEmailVerification(credential.user);
+    } catch {
+      // L'envoi de vérification email reste non bloquant
+    }
+    const uid = credential.user.uid;
+    await signOut(secondaryAuth);
+    return { uid };
+  } finally {
+    await deleteApp(secondaryApp);
   }
 }

@@ -19,6 +19,11 @@ import {
   PenTool,
   Stamp,
   Landmark,
+  Edit2,
+  ShieldAlert,
+  UserPlus,
+  Check,
+  X,
 } from 'lucide-react';
 import { useCrm } from '../context/CrmContext';
 import { useAuth } from '../hooks/useAuth';
@@ -26,6 +31,7 @@ import {
   SUPPORTED_CURRENCIES,
   USER_ROLE_LABELS,
   type CrmEntity,
+  type CrmTag,
   type LegalSetting,
   type Product,
   type UserProfile,
@@ -41,6 +47,7 @@ import {
 } from '../utils/branding';
 import { processSignatureOrStampFile } from '../utils/imageUpload';
 import { BrandLogo } from '../components/ui/BrandLogo';
+import { Modal } from '../components/ui/Modal';
 
 type SettingsTab =
   | 'entities'
@@ -64,20 +71,55 @@ export function SettingsPage() {
     settings,
     saveEntity,
     saveUser,
+    createManagedUser,
+    deleteUser,
     saveTag,
+    deleteTag,
     saveProduct,
     saveLegalSetting,
     saveIntegration,
     saveSettings,
     seedFirestore,
   } = useCrm();
-  const { canManageEntities, canManageUsers, canWriteCrm, authMode } = useAuth();
+  const { canManageSettings, user, authMode } = useAuth();
+  const canEditSettings = canManageSettings;
 
   const [tab, setTab] = useState<SettingsTab>('entities');
   const [newEntityName, setNewEntityName] = useState('');
   const [newEntityDesc, setNewEntityDesc] = useState('');
   const [newEntityColor, setNewEntityColor] = useState('#19283E');
+
+  // Édition d'une entité existante (Super Admin)
+  const [editingEntity, setEditingEntity] = useState<CrmEntity | null>(null);
+  const [editEntityName, setEditEntityName] = useState('');
+  const [editEntityDesc, setEditEntityDesc] = useState('');
+  const [editEntityColor, setEditEntityColor] = useState('#19283E');
+  const [editEntityLogoUrl, setEditEntityLogoUrl] = useState('');
+  const [editEntityActive, setEditEntityActive] = useState(true);
+  const [editEntityError, setEditEntityError] = useState<string | null>(null);
+  const [savingEntity, setSavingEntity] = useState(false);
+
+  // Utilisateurs : ajout & suppression (Super Admin)
+  const [addUserOpen, setAddUserOpen] = useState(false);
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserRole, setNewUserRole] = useState<UserRole>('sales');
+  const [newUserEntities, setNewUserEntities] = useState<string[]>(['arena-business-center']);
+  const [newUserError, setNewUserError] = useState<string | null>(null);
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState<UserProfile | null>(null);
+  const [deletingUser, setDeletingUser] = useState(false);
+
+  // Tags de qualification : ajout, édition, suppression (Super Admin)
   const [newTagName, setNewTagName] = useState('');
+  const [newTagColor, setNewTagColor] = useState('#1d4ed8');
+  const [editingTag, setEditingTag] = useState<CrmTag | null>(null);
+  const [editTagName, setEditTagName] = useState('');
+  const [editTagColor, setEditTagColor] = useState('#1d4ed8');
+  const [confirmDeleteTag, setConfirmDeleteTag] = useState<CrmTag | null>(null);
+  const [deletingTag, setDeletingTag] = useState(false);
+
   const [seeding, setSeeding] = useState(false);
 
   const [currency, setCurrency] = useState(settings.defaultCurrency);
@@ -177,7 +219,7 @@ export function SettingsPage() {
 
   const handleCreateEntity = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newEntityName.trim()) return;
+    if (!canEditSettings || !newEntityName.trim()) return;
     const slug = newEntityName
       .trim()
       .toLowerCase()
@@ -200,8 +242,49 @@ export function SettingsPage() {
     setNewEntityDesc('');
   };
 
+  const openEditEntityModal = (entity: CrmEntity) => {
+    setEditingEntity(entity);
+    setEditEntityName(entity.name);
+    setEditEntityDesc(entity.description ?? '');
+    setEditEntityColor(entity.color || '#19283E');
+    setEditEntityLogoUrl(entity.logoUrl ?? '');
+    setEditEntityActive(entity.active);
+    setEditEntityError(null);
+  };
+
+  const handleSaveEditedEntity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canEditSettings || !editingEntity) return;
+    if (!editEntityName.trim()) {
+      setEditEntityError("Le nom de l'entité est obligatoire.");
+      return;
+    }
+    setSavingEntity(true);
+    setEditEntityError(null);
+    try {
+      await saveEntity(
+        {
+          ...editingEntity,
+          name: editEntityName.trim(),
+          description: editEntityDesc.trim(),
+          color: editEntityColor || '#19283E',
+          logoUrl: editEntityLogoUrl.trim(),
+          active: editEntityActive,
+          updatedAt: new Date().toISOString(),
+        },
+        false
+      );
+      setEditingEntity(null);
+    } catch (err) {
+      setEditEntityError(err instanceof Error ? err.message : "Erreur lors de la mise à jour.");
+    } finally {
+      setSavingEntity(false);
+    }
+  };
+
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEditSettings) return;
     setProdError(null);
     const autoSku =
       prodSku.trim() ||
@@ -260,6 +343,7 @@ export function SettingsPage() {
   };
 
   const handleToggleUserEntity = (targetUser: UserProfile, entityId: string) => {
+    if (!canEditSettings) return;
     const nextIds = targetUser.entityIds.includes(entityId)
       ? targetUser.entityIds.filter((id) => id !== entityId)
       : [...targetUser.entityIds, entityId];
@@ -267,18 +351,60 @@ export function SettingsPage() {
   };
 
   const handleRoleChange = (targetUser: UserProfile, role: UserRole) => {
+    if (!canEditSettings) return;
     saveUser({ ...targetUser, role });
+  };
+
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canEditSettings) return;
+    setNewUserError(null);
+    if (!newUserName.trim()) {
+      setNewUserError('Le nom complet est obligatoire.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newUserEmail.trim())) {
+      setNewUserError('Adresse email invalide.');
+      return;
+    }
+    if (authMode === 'firebase' && newUserPassword.length < 6) {
+      setNewUserError('Le mot de passe provisoire doit contenir au moins 6 caractères.');
+      return;
+    }
+    setCreatingUser(true);
+    try {
+      await createManagedUser({
+        displayName: newUserName.trim(),
+        email: newUserEmail.trim(),
+        password: newUserPassword || 'ArenaDemo2026!',
+        role: newUserRole,
+        entityIds:
+          newUserRole === 'super_admin'
+            ? entities.map((ent) => ent.id)
+            : newUserEntities,
+      });
+      setAddUserOpen(false);
+      setNewUserName('');
+      setNewUserEmail('');
+      setNewUserPassword('');
+      setNewUserRole('sales');
+      setNewUserEntities(entities[0]?.id ? [entities[0].id] : []);
+    } catch (err) {
+      setNewUserError(err instanceof Error ? err.message : "Impossible de créer l'utilisateur.");
+    } finally {
+      setCreatingUser(false);
+    }
   };
 
   const handleAddTag = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newTagName.trim()) return;
+    if (!canEditSettings || !newTagName.trim()) return;
     await saveTag(
       {
         id: `tag-${Date.now()}`,
         entityId: 'group',
         name: newTagName.trim(),
-        color: '#1d4ed8',
+        color: newTagColor || '#1d4ed8',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -287,7 +413,22 @@ export function SettingsPage() {
     setNewTagName('');
   };
 
+  const handleSaveEditedTag = async (tag: CrmTag) => {
+    if (!canEditSettings || !editTagName.trim()) return;
+    await saveTag(
+      {
+        ...tag,
+        name: editTagName.trim(),
+        color: editTagColor || tag.color || '#1d4ed8',
+        updatedAt: new Date().toISOString(),
+      },
+      false
+    );
+    setEditingTag(null);
+  };
+
   const handleSeed = async () => {
+    if (!canEditSettings) return;
     setSeeding(true);
     try {
       await seedFirestore();
@@ -327,6 +468,13 @@ export function SettingsPage() {
   const [outlookDraft, setOutlookDraft] = useState(outlookSetting);
   const [waDraft, setWaDraft] = useState(whatsappSetting);
 
+  useEffect(() => {
+    const o = integrations.find((i) => i.provider === 'outlook');
+    if (o) setOutlookDraft(o);
+    const w = integrations.find((i) => i.provider === 'whatsapp');
+    if (w) setWaDraft(w);
+  }, [integrations]);
+
   const filteredProducts = products.filter(
     (p) =>
       !productSearch.trim() ||
@@ -353,6 +501,19 @@ export function SettingsPage() {
           Entités, charte graphique, catalogue commercial, mentions légales, connecteurs Outlook / WhatsApp et accès.
         </p>
       </div>
+
+      {!canEditSettings && (
+        <div
+          role="status"
+          data-testid="settings-readonly-banner"
+          className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex items-center gap-2.5"
+        >
+          <ShieldAlert className="h-4 w-4 text-amber-700 shrink-0" />
+          <span>
+            <strong>Mode lecture seule :</strong> seuls les Super Admins peuvent modifier les paramètres du CRM.
+          </span>
+        </div>
+      )}
 
       <div className="border-b border-[#E1E4EA] flex items-center gap-1 overflow-x-auto">
         {tabs.map((t) => (
@@ -465,14 +626,25 @@ export function SettingsPage() {
                         Slug : {entity.slug} · {entity.active ? 'Active' : 'Inactive'}
                       </p>
                     </div>
-                    {canManageEntities && (
-                      <button
-                        type="button"
-                        onClick={() => saveEntity({ ...entity, active: !entity.active }, false)}
-                        className="h-8 rounded-lg border border-[#E1E4EA] px-2.5 text-xs font-medium text-[#19283E] hover:bg-[#E1E4EA]/40 whitespace-nowrap"
-                      >
-                        {entity.active ? 'Désactiver' : 'Activer'}
-                      </button>
+                    {canEditSettings && (
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => openEditEntityModal(entity)}
+                          aria-label={`Modifier ${entity.name}`}
+                          className="inline-flex h-8 items-center gap-1 rounded-lg border border-[#E1E4EA] px-2.5 text-xs font-medium text-[#19283E] hover:bg-[#E1E4EA]/40 whitespace-nowrap"
+                        >
+                          <Edit2 className="h-3.5 w-3.5" />
+                          Modifier
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => saveEntity({ ...entity, active: !entity.active }, false)}
+                          className="h-8 rounded-lg border border-[#E1E4EA] px-2.5 text-xs font-medium text-[#19283E] hover:bg-[#E1E4EA]/40 whitespace-nowrap"
+                        >
+                          {entity.active ? 'Désactiver' : 'Activer'}
+                        </button>
+                      </div>
                     )}
                   </div>
 
@@ -483,7 +655,7 @@ export function SettingsPage() {
                         entityId={entity.id}
                         variant="light"
                         alt={`Logo ${entity.name} fond clair`}
-                        customUrl={entity.logoUrl && entity.id !== spec.id ? entity.logoUrl : undefined}
+                        customUrl={entity.logoUrl?.trim() || undefined}
                         className="h-10 w-full"
                       />
                       <span className="text-[11px] text-slate-500">Fond clair</span>
@@ -493,6 +665,7 @@ export function SettingsPage() {
                         entityId={entity.id}
                         variant="dark"
                         alt={`Logo ${entity.name} fond sombre`}
+                        customUrl={entity.logoUrl?.trim() || undefined}
                         className="h-10 w-full"
                       />
                       <span className="text-[11px] text-[#E1E4EA]/80">
@@ -516,7 +689,7 @@ export function SettingsPage() {
             })}
           </div>
 
-          {canManageEntities && (
+          {canEditSettings && (
             <form
               onSubmit={handleCreateEntity}
               className="rounded-xl border border-[#E1E4EA] bg-white p-5 space-y-4"
@@ -639,7 +812,7 @@ export function SettingsPage() {
                               .join(', ')}
                       </td>
                       <td className="py-2.5 px-3 text-right">
-                        {canWriteCrm ? (
+                        {canEditSettings ? (
                           <button
                             type="button"
                             onClick={() => saveProduct({ ...p, active: !p.active }, false)}
@@ -662,7 +835,7 @@ export function SettingsPage() {
             </div>
           </div>
 
-          {canWriteCrm && (
+          {canEditSettings && (
             <form
               onSubmit={handleCreateProduct}
               className="rounded-xl border border-slate-200 bg-white p-5 space-y-4"
@@ -800,6 +973,7 @@ export function SettingsPage() {
                         entityId={entity.id}
                         variant="light"
                         alt={`Logo ${entity.name}`}
+                        customUrl={entity.logoUrl?.trim() || undefined}
                         className="h-8 w-24 shrink-0"
                       />
                       <div className="min-w-0">
@@ -823,337 +997,339 @@ export function SettingsPage() {
                     </div>
                   )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        Raison sociale facturation
-                      </label>
-                      <input
-                        type="text"
-                        value={draft.legalName}
-                        onChange={(e) => patchLegalDraft(entity.id, { legalName: e.target.value })}
-                        className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        Code préfixe (DEV/FAC)
-                      </label>
-                      <input
-                        type="text"
-                        value={draft.entityCode}
-                        onChange={(e) =>
-                          patchLegalDraft(entity.id, { entityCode: e.target.value.toUpperCase() })
-                        }
-                        className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">NIF</label>
-                      <input
-                        type="text"
-                        value={draft.nif}
-                        onChange={(e) => patchLegalDraft(entity.id, { nif: e.target.value })}
-                        className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">STAT</label>
-                      <input
-                        type="text"
-                        value={draft.stat}
-                        onChange={(e) => patchLegalDraft(entity.id, { stat: e.target.value })}
-                        className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
-                      />
-                    </div>
-                    <div>
-                      <label
-                        htmlFor={`legal-rcs-${entity.id}`}
-                        className="block text-xs font-medium text-slate-700 mb-1"
-                      >
-                        RCS (Registre du commerce)
-                      </label>
-                      <input
-                        id={`legal-rcs-${entity.id}`}
-                        type="text"
-                        maxLength={60}
-                        placeholder="ex. RCS Antananarivo 2020 B 00123"
-                        value={draft.rcs ?? ''}
-                        onChange={(e) => patchLegalDraft(entity.id, { rcs: e.target.value })}
-                        className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        Conditions de règlement
-                      </label>
-                      <input
-                        type="text"
-                        value={draft.paymentTerms}
-                        onChange={(e) => patchLegalDraft(entity.id, { paymentTerms: e.target.value })}
-                        className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label
-                        htmlFor={`legal-phone-${entity.id}`}
-                        className="block text-xs font-medium text-slate-700 mb-1"
-                      >
-                        Téléphone (pied de facture)
-                      </label>
-                      <input
-                        id={`legal-phone-${entity.id}`}
-                        type="text"
-                        placeholder="+261 34 00 000 00"
-                        value={draft.phone ?? ''}
-                        onChange={(e) => patchLegalDraft(entity.id, { phone: e.target.value })}
-                        className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label
-                        htmlFor={`legal-email-${entity.id}`}
-                        className="block text-xs font-medium text-slate-700 mb-1"
-                      >
-                        Email (pied de facture)
-                      </label>
-                      <input
-                        id={`legal-email-${entity.id}`}
-                        type="email"
-                        placeholder="facturation@arenagroup.mg"
-                        value={draft.email ?? ''}
-                        onChange={(e) => patchLegalDraft(entity.id, { email: e.target.value })}
-                        className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
-                      />
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label
-                        htmlFor={`legal-address-${entity.id}`}
-                        className="block text-xs font-medium text-slate-700 mb-1"
-                      >
-                        Adresse du siège social (bloc Émetteur « DE: »)
-                      </label>
-                      <input
-                        id={`legal-address-${entity.id}`}
-                        type="text"
-                        placeholder="Lot ..., Antananarivo 101"
-                        value={draft.address}
-                        onChange={(e) => patchLegalDraft(entity.id, { address: e.target.value })}
-                        className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Coordonnées bancaires */}
-                  <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3.5 space-y-2.5">
-                    <p className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
-                      <Landmark className="h-3.5 w-3.5 text-slate-500" />
-                      Coordonnées bancaires (affichées en bas de facture)
-                    </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <fieldset disabled={!canEditSettings} className="space-y-4 disabled:opacity-75">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <label
-                          htmlFor={`legal-bank-holder-${entity.id}`}
-                          className="block text-[11px] font-medium text-slate-600 mb-1"
-                        >
-                          Titulaire du compte
+                        <label className="block text-xs font-medium text-slate-700 mb-1">
+                          Raison sociale facturation
                         </label>
                         <input
-                          id={`legal-bank-holder-${entity.id}`}
                           type="text"
-                          value={draft.bankAccountHolder ?? ''}
+                          value={draft.legalName}
+                          onChange={(e) => patchLegalDraft(entity.id, { legalName: e.target.value })}
+                          className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">
+                          Code préfixe (DEV/FAC)
+                        </label>
+                        <input
+                          type="text"
+                          value={draft.entityCode}
                           onChange={(e) =>
-                            patchLegalDraft(entity.id, { bankAccountHolder: e.target.value })
+                            patchLegalDraft(entity.id, { entityCode: e.target.value.toUpperCase() })
                           }
-                          className="w-full h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs"
+                          className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">NIF</label>
+                        <input
+                          type="text"
+                          value={draft.nif}
+                          onChange={(e) => patchLegalDraft(entity.id, { nif: e.target.value })}
+                          className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">STAT</label>
+                        <input
+                          type="text"
+                          value={draft.stat}
+                          onChange={(e) => patchLegalDraft(entity.id, { stat: e.target.value })}
+                          className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
                         />
                       </div>
                       <div>
                         <label
-                          htmlFor={`legal-bank-name-${entity.id}`}
-                          className="block text-[11px] font-medium text-slate-600 mb-1"
+                          htmlFor={`legal-rcs-${entity.id}`}
+                          className="block text-xs font-medium text-slate-700 mb-1"
                         >
-                          Banque
+                          RCS (Registre du commerce)
                         </label>
                         <input
-                          id={`legal-bank-name-${entity.id}`}
+                          id={`legal-rcs-${entity.id}`}
                           type="text"
-                          placeholder="ex. BNI MADAGASCAR"
-                          value={draft.bankName ?? ''}
-                          onChange={(e) =>
-                            patchLegalDraft(entity.id, { bankName: e.target.value })
-                          }
-                          className="w-full h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs"
+                          maxLength={60}
+                          placeholder="ex. RCS Antananarivo 2020 B 00123"
+                          value={draft.rcs ?? ''}
+                          onChange={(e) => patchLegalDraft(entity.id, { rcs: e.target.value })}
+                          className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-700 mb-1">
+                          Conditions de règlement
+                        </label>
+                        <input
+                          type="text"
+                          value={draft.paymentTerms}
+                          onChange={(e) => patchLegalDraft(entity.id, { paymentTerms: e.target.value })}
+                          className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor={`legal-phone-${entity.id}`}
+                          className="block text-xs font-medium text-slate-700 mb-1"
+                        >
+                          Téléphone (pied de facture)
+                        </label>
+                        <input
+                          id={`legal-phone-${entity.id}`}
+                          type="text"
+                          placeholder="+261 34 00 000 00"
+                          value={draft.phone ?? ''}
+                          onChange={(e) => patchLegalDraft(entity.id, { phone: e.target.value })}
+                          className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label
+                          htmlFor={`legal-email-${entity.id}`}
+                          className="block text-xs font-medium text-slate-700 mb-1"
+                        >
+                          Email (pied de facture)
+                        </label>
+                        <input
+                          id={`legal-email-${entity.id}`}
+                          type="email"
+                          placeholder="facturation@arenagroup.mg"
+                          value={draft.email ?? ''}
+                          onChange={(e) => patchLegalDraft(entity.id, { email: e.target.value })}
+                          className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
                         />
                       </div>
                       <div className="sm:col-span-2">
                         <label
-                          htmlFor={`legal-bank-addr-${entity.id}`}
-                          className="block text-[11px] font-medium text-slate-600 mb-1"
+                          htmlFor={`legal-address-${entity.id}`}
+                          className="block text-xs font-medium text-slate-700 mb-1"
                         >
-                          Adresse agence / banque
+                          Adresse du siège social (bloc Émetteur « DE: »)
                         </label>
                         <input
-                          id={`legal-bank-addr-${entity.id}`}
+                          id={`legal-address-${entity.id}`}
                           type="text"
-                          value={draft.bankAddress ?? ''}
-                          onChange={(e) =>
-                            patchLegalDraft(entity.id, { bankAddress: e.target.value })
-                          }
-                          className="w-full h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs"
-                        />
-                      </div>
-                      <div>
-                        <label
-                          htmlFor={`legal-iban-${entity.id}`}
-                          className="block text-[11px] font-medium text-slate-600 mb-1"
-                        >
-                          IBAN / RIB
-                        </label>
-                        <input
-                          id={`legal-iban-${entity.id}`}
-                          type="text"
-                          value={draft.iban ?? ''}
-                          onChange={(e) => patchLegalDraft(entity.id, { iban: e.target.value })}
-                          className="w-full h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-sans tabular-nums"
-                        />
-                      </div>
-                      <div>
-                        <label
-                          htmlFor={`legal-bic-${entity.id}`}
-                          className="block text-[11px] font-medium text-slate-600 mb-1"
-                        >
-                          BIC / SWIFT
-                        </label>
-                        <input
-                          id={`legal-bic-${entity.id}`}
-                          type="text"
-                          value={draft.bic ?? ''}
-                          onChange={(e) => patchLegalDraft(entity.id, { bic: e.target.value })}
-                          className="w-full h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-sans tabular-nums"
+                          placeholder="Lot ..., Antananarivo 101"
+                          value={draft.address}
+                          onChange={(e) => patchLegalDraft(entity.id, { address: e.target.value })}
+                          className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
                         />
                       </div>
                     </div>
-                  </div>
 
-                  {/* Signature & Tampon */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
-                          <PenTool className="h-3.5 w-3.5 text-slate-500" />
-                          Signature officielle
-                        </span>
-                        {canManageEntities && draft.signatureImageUrl && (
-                          <button
-                            type="button"
-                            onClick={() => patchLegalDraft(entity.id, { signatureImageUrl: '' })}
-                            className="inline-flex items-center gap-1 text-[11px] text-red-600 hover:underline"
+                    {/* Coordonnées bancaires */}
+                    <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3.5 space-y-2.5">
+                      <p className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+                        <Landmark className="h-3.5 w-3.5 text-slate-500" />
+                        Coordonnées bancaires (affichées en bas de facture)
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label
+                            htmlFor={`legal-bank-holder-${entity.id}`}
+                            className="block text-[11px] font-medium text-slate-600 mb-1"
                           >
-                            <Trash2 className="h-3 w-3" />
-                            Supprimer
-                          </button>
-                        )}
-                      </div>
-                      <div className="h-20 rounded-md border border-dashed border-slate-300 bg-white flex items-center justify-center p-2 overflow-hidden">
-                        {draft.signatureImageUrl ? (
-                          <img
-                            src={draft.signatureImageUrl}
-                            alt={`Signature ${entity.name}`}
-                            className="max-h-full max-w-full object-contain"
-                          />
-                        ) : (
-                          <span className="text-[11px] text-slate-400">Aucune signature</span>
-                        )}
-                      </div>
-                      {canManageEntities && (
-                        <label
-                          htmlFor={`upload-sig-${entity.id}`}
-                          className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
-                        >
-                          <Upload className="h-3.5 w-3.5" />
-                          Importer signature (PNG/JPG)
+                            Titulaire du compte
+                          </label>
                           <input
-                            id={`upload-sig-${entity.id}`}
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp,image/svg+xml"
-                            className="sr-only"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              handleLegalImageUpload(entity.id, 'signatureImageUrl', file);
-                              e.currentTarget.value = '';
-                            }}
+                            id={`legal-bank-holder-${entity.id}`}
+                            type="text"
+                            value={draft.bankAccountHolder ?? ''}
+                            onChange={(e) =>
+                              patchLegalDraft(entity.id, { bankAccountHolder: e.target.value })
+                            }
+                            className="w-full h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs"
                           />
-                        </label>
-                      )}
-                    </div>
-
-                    <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
-                          <Stamp className="h-3.5 w-3.5 text-slate-500" />
-                          Tampon / Cachet
-                        </span>
-                        {canManageEntities && draft.stampImageUrl && (
-                          <button
-                            type="button"
-                            onClick={() => patchLegalDraft(entity.id, { stampImageUrl: '' })}
-                            className="inline-flex items-center gap-1 text-[11px] text-red-600 hover:underline"
+                        </div>
+                        <div>
+                          <label
+                            htmlFor={`legal-bank-name-${entity.id}`}
+                            className="block text-[11px] font-medium text-slate-600 mb-1"
                           >
-                            <Trash2 className="h-3 w-3" />
-                            Supprimer
-                          </button>
-                        )}
-                      </div>
-                      <div className="h-20 rounded-md border border-dashed border-slate-300 bg-white flex items-center justify-center p-2 overflow-hidden">
-                        {draft.stampImageUrl ? (
-                          <img
-                            src={draft.stampImageUrl}
-                            alt={`Tampon ${entity.name}`}
-                            className="max-h-full max-w-full object-contain"
-                          />
-                        ) : (
-                          <span className="text-[11px] text-slate-400">Aucun tampon</span>
-                        )}
-                      </div>
-                      {canManageEntities && (
-                        <label
-                          htmlFor={`upload-stamp-${entity.id}`}
-                          className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
-                        >
-                          <Upload className="h-3.5 w-3.5" />
-                          Importer tampon (PNG/JPG)
+                            Banque
+                          </label>
                           <input
-                            id={`upload-stamp-${entity.id}`}
-                            type="file"
-                            accept="image/png,image/jpeg,image/webp,image/svg+xml"
-                            className="sr-only"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              handleLegalImageUpload(entity.id, 'stampImageUrl', file);
-                              e.currentTarget.value = '';
-                            }}
+                            id={`legal-bank-name-${entity.id}`}
+                            type="text"
+                            placeholder="ex. BNI MADAGASCAR"
+                            value={draft.bankName ?? ''}
+                            onChange={(e) =>
+                              patchLegalDraft(entity.id, { bankName: e.target.value })
+                            }
+                            className="w-full h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs"
                           />
-                        </label>
-                      )}
+                        </div>
+                        <div className="sm:col-span-2">
+                          <label
+                            htmlFor={`legal-bank-addr-${entity.id}`}
+                            className="block text-[11px] font-medium text-slate-600 mb-1"
+                          >
+                            Adresse agence / banque
+                          </label>
+                          <input
+                            id={`legal-bank-addr-${entity.id}`}
+                            type="text"
+                            value={draft.bankAddress ?? ''}
+                            onChange={(e) =>
+                              patchLegalDraft(entity.id, { bankAddress: e.target.value })
+                            }
+                            className="w-full h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs"
+                          />
+                        </div>
+                        <div>
+                          <label
+                            htmlFor={`legal-iban-${entity.id}`}
+                            className="block text-[11px] font-medium text-slate-600 mb-1"
+                          >
+                            IBAN / RIB
+                          </label>
+                          <input
+                            id={`legal-iban-${entity.id}`}
+                            type="text"
+                            value={draft.iban ?? ''}
+                            onChange={(e) => patchLegalDraft(entity.id, { iban: e.target.value })}
+                            className="w-full h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-sans tabular-nums"
+                          />
+                        </div>
+                        <div>
+                          <label
+                            htmlFor={`legal-bic-${entity.id}`}
+                            className="block text-[11px] font-medium text-slate-600 mb-1"
+                          >
+                            BIC / SWIFT
+                          </label>
+                          <input
+                            id={`legal-bic-${entity.id}`}
+                            type="text"
+                            value={draft.bic ?? ''}
+                            onChange={(e) => patchLegalDraft(entity.id, { bic: e.target.value })}
+                            className="w-full h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-sans tabular-nums"
+                          />
+                        </div>
+                      </div>
                     </div>
-                  </div>
 
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      Mentions légales par défaut (PDF Devis & Factures)
-                    </label>
-                    <textarea
-                      rows={2}
-                      value={draft.defaultLegalMentions}
-                      onChange={(e) =>
-                        patchLegalDraft(entity.id, { defaultLegalMentions: e.target.value })
-                      }
-                      className="w-full rounded-lg border border-slate-200 p-2.5 text-sm"
-                    />
-                  </div>
+                    {/* Signature & Tampon */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+                            <PenTool className="h-3.5 w-3.5 text-slate-500" />
+                            Signature officielle
+                          </span>
+                          {canEditSettings && draft.signatureImageUrl && (
+                            <button
+                              type="button"
+                              onClick={() => patchLegalDraft(entity.id, { signatureImageUrl: '' })}
+                              className="inline-flex items-center gap-1 text-[11px] text-red-600 hover:underline"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              Supprimer
+                            </button>
+                          )}
+                        </div>
+                        <div className="h-20 rounded-md border border-dashed border-slate-300 bg-white flex items-center justify-center p-2 overflow-hidden">
+                          {draft.signatureImageUrl ? (
+                            <img
+                              src={draft.signatureImageUrl}
+                              alt={`Signature ${entity.name}`}
+                              className="max-h-full max-w-full object-contain"
+                            />
+                          ) : (
+                            <span className="text-[11px] text-slate-400">Aucune signature</span>
+                          )}
+                        </div>
+                        {canEditSettings && (
+                          <label
+                            htmlFor={`upload-sig-${entity.id}`}
+                            className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                          >
+                            <Upload className="h-3.5 w-3.5" />
+                            Importer signature (PNG/JPG)
+                            <input
+                              id={`upload-sig-${entity.id}`}
+                              type="file"
+                              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                              className="sr-only"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                handleLegalImageUpload(entity.id, 'signatureImageUrl', file);
+                                e.currentTarget.value = '';
+                              }}
+                            />
+                          </label>
+                        )}
+                      </div>
 
-                  {canManageEntities && (
+                      <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+                            <Stamp className="h-3.5 w-3.5 text-slate-500" />
+                            Tampon / Cachet
+                          </span>
+                          {canEditSettings && draft.stampImageUrl && (
+                            <button
+                              type="button"
+                              onClick={() => patchLegalDraft(entity.id, { stampImageUrl: '' })}
+                              className="inline-flex items-center gap-1 text-[11px] text-red-600 hover:underline"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                              Supprimer
+                            </button>
+                          )}
+                        </div>
+                        <div className="h-20 rounded-md border border-dashed border-slate-300 bg-white flex items-center justify-center p-2 overflow-hidden">
+                          {draft.stampImageUrl ? (
+                            <img
+                              src={draft.stampImageUrl}
+                              alt={`Tampon ${entity.name}`}
+                              className="max-h-full max-w-full object-contain"
+                            />
+                          ) : (
+                            <span className="text-[11px] text-slate-400">Aucun tampon</span>
+                          )}
+                        </div>
+                        {canEditSettings && (
+                          <label
+                            htmlFor={`upload-stamp-${entity.id}`}
+                            className="inline-flex h-8 w-full cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                          >
+                            <Upload className="h-3.5 w-3.5" />
+                            Importer tampon (PNG/JPG)
+                            <input
+                              id={`upload-stamp-${entity.id}`}
+                              type="file"
+                              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                              className="sr-only"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                handleLegalImageUpload(entity.id, 'stampImageUrl', file);
+                                e.currentTarget.value = '';
+                              }}
+                            />
+                          </label>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-medium text-slate-700 mb-1">
+                        Mentions légales par défaut (PDF Devis & Factures)
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={draft.defaultLegalMentions}
+                        onChange={(e) =>
+                          patchLegalDraft(entity.id, { defaultLegalMentions: e.target.value })
+                        }
+                        className="w-full rounded-lg border border-slate-200 p-2.5 text-sm"
+                      />
+                    </div>
+                  </fieldset>
+
+                  {canEditSettings && (
                     <button
                       type="button"
                       onClick={() =>
@@ -1196,76 +1372,78 @@ export function SettingsPage() {
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <fieldset disabled={!canEditSettings} className="space-y-4 disabled:opacity-75">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Tenant ID Microsoft (public)
+                  </label>
+                  <input
+                    type="text"
+                    value={outlookDraft.tenantId ?? ''}
+                    onChange={(e) =>
+                      setOutlookDraft((p) => ({ ...p, tenantId: e.target.value }))
+                    }
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx"
+                    className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Client ID Application
+                  </label>
+                  <input
+                    type="text"
+                    value={outlookDraft.clientId ?? ''}
+                    onChange={(e) =>
+                      setOutlookDraft((p) => ({ ...p, clientId: e.target.value }))
+                    }
+                    placeholder="xxxxxxxx-xxxx-xxxx-xxxx"
+                    className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Tenant ID Microsoft (public)
+                  Adresse email professionnelle associée
                 </label>
                 <input
-                  type="text"
-                  value={outlookDraft.tenantId ?? ''}
+                  type="email"
+                  value={outlookDraft.accountEmail ?? ''}
                   onChange={(e) =>
-                    setOutlookDraft((p) => ({ ...p, tenantId: e.target.value }))
+                    setOutlookDraft((p) => ({ ...p, accountEmail: e.target.value }))
                   }
-                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx"
-                  className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
+                  placeholder="contact@arenagroup.fr"
+                  className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
                 />
               </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Client ID Application
+
+              <div className="flex flex-wrap gap-4 text-xs text-slate-700">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={outlookDraft.syncEmails}
+                    onChange={(e) =>
+                      setOutlookDraft((p) => ({ ...p, syncEmails: e.target.checked }))
+                    }
+                  />
+                  Journaliser les emails commerciaux
                 </label>
-                <input
-                  type="text"
-                  value={outlookDraft.clientId ?? ''}
-                  onChange={(e) =>
-                    setOutlookDraft((p) => ({ ...p, clientId: e.target.value }))
-                  }
-                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx"
-                  className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
-                />
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={outlookDraft.syncCalendar}
+                    onChange={(e) =>
+                      setOutlookDraft((p) => ({ ...p, syncCalendar: e.target.checked }))
+                    }
+                  />
+                  Synchronisation Agenda Outlook
+                </label>
               </div>
-            </div>
+            </fieldset>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">
-                Adresse email professionnelle associée
-              </label>
-              <input
-                type="email"
-                value={outlookDraft.accountEmail ?? ''}
-                onChange={(e) =>
-                  setOutlookDraft((p) => ({ ...p, accountEmail: e.target.value }))
-                }
-                placeholder="contact@arenagroup.fr"
-                className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
-              />
-            </div>
-
-            <div className="flex flex-wrap gap-4 text-xs text-slate-700">
-              <label className="inline-flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={outlookDraft.syncEmails}
-                  onChange={(e) =>
-                    setOutlookDraft((p) => ({ ...p, syncEmails: e.target.checked }))
-                  }
-                />
-                Journaliser les emails commerciaux
-              </label>
-              <label className="inline-flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={outlookDraft.syncCalendar}
-                  onChange={(e) =>
-                    setOutlookDraft((p) => ({ ...p, syncCalendar: e.target.checked }))
-                  }
-                />
-                Synchronisation Agenda Outlook
-              </label>
-            </div>
-
-            {canWriteCrm && (
+            {canEditSettings && (
               <button
                 type="button"
                 onClick={() =>
@@ -1305,33 +1483,35 @@ export function SettingsPage() {
               </span>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-700 mb-1">
-                Numéro WhatsApp Business émetteur
+            <fieldset disabled={!canEditSettings} className="space-y-4 disabled:opacity-75">
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  Numéro WhatsApp Business émetteur
+                </label>
+                <input
+                  type="tel"
+                  value={waDraft.businessPhoneNumber ?? ''}
+                  onChange={(e) =>
+                    setWaDraft((p) => ({ ...p, businessPhoneNumber: e.target.value }))
+                  }
+                  placeholder="+33 6 00 00 00 00"
+                  className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
+                />
+              </div>
+
+              <label className="inline-flex items-center gap-2 text-xs text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={waDraft.enabled}
+                  onChange={(e) =>
+                    setWaDraft((p) => ({ ...p, enabled: e.target.checked }))
+                  }
+                />
+                Activer les boutons d'action rapide WhatsApp sur les fiches Contacts & Prospects
               </label>
-              <input
-                type="tel"
-                value={waDraft.businessPhoneNumber ?? ''}
-                onChange={(e) =>
-                  setWaDraft((p) => ({ ...p, businessPhoneNumber: e.target.value }))
-                }
-                placeholder="+33 6 00 00 00 00"
-                className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
-              />
-            </div>
+            </fieldset>
 
-            <label className="inline-flex items-center gap-2 text-xs text-slate-700">
-              <input
-                type="checkbox"
-                checked={waDraft.enabled}
-                onChange={(e) =>
-                  setWaDraft((p) => ({ ...p, enabled: e.target.checked }))
-                }
-              />
-              Activer les boutons d'action rapide WhatsApp sur les fiches Contacts & Prospects
-            </label>
-
-            {canWriteCrm && (
+            {canEditSettings && (
               <div>
                 <button
                   type="button"
@@ -1357,11 +1537,26 @@ export function SettingsPage() {
 
       {tab === 'users' && (
         <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-          <div className="px-5 py-4 border-b border-slate-200 flex items-center gap-2">
-            <Users className="h-4 w-4 text-slate-500" />
-            <h2 className="text-base font-semibold text-slate-900">
-              Utilisateurs & permissions par entité
-            </h2>
+          <div className="px-5 py-4 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-slate-500" />
+              <h2 className="text-base font-semibold text-slate-900">
+                Utilisateurs & permissions par entité ({users.length})
+              </h2>
+            </div>
+            {canEditSettings && (
+              <button
+                type="button"
+                onClick={() => {
+                  setNewUserError(null);
+                  setAddUserOpen(true);
+                }}
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#19283E] px-3.5 text-xs sm:text-sm font-medium text-white hover:bg-[#223552] whitespace-nowrap"
+              >
+                <UserPlus className="h-4 w-4 text-[#C9A125]" />
+                Ajouter un utilisateur
+              </button>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
@@ -1371,79 +1566,110 @@ export function SettingsPage() {
                   <th className="py-3 px-4">Rôle</th>
                   <th className="py-3 px-4">Entités autorisées</th>
                   <th className="py-3 px-4">Statut</th>
+                  {canEditSettings && <th className="py-3 px-4 text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
-                {users.map((u) => (
-                  <tr key={u.uid}>
-                    <td className="py-3 px-4">
-                      <p className="font-medium text-slate-900">{u.displayName}</p>
-                      <p className="text-xs text-slate-500">{u.email}</p>
-                    </td>
-                    <td className="py-3 px-4">
-                      {canManageUsers ? (
-                        <select
-                          aria-label={`Rôle de ${u.displayName}`}
-                          value={u.role}
-                          onChange={(e) => handleRoleChange(u, e.target.value as UserRole)}
-                          className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs"
-                        >
-                          {(Object.keys(USER_ROLE_LABELS) as UserRole[]).map((role) => (
-                            <option key={role} value={role}>
-                              {USER_ROLE_LABELS[role]}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <span className="text-xs text-slate-700">
-                          {USER_ROLE_LABELS[u.role]}
-                        </span>
+                {users.map((u) => {
+                  const isSelf = u.uid === user?.uid;
+                  return (
+                    <tr key={u.uid}>
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium text-slate-900">{u.displayName}</p>
+                          {isSelf && (
+                            <span className="rounded border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">
+                              Vous
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-500">{u.email}</p>
+                      </td>
+                      <td className="py-3 px-4">
+                        {canEditSettings ? (
+                          <select
+                            aria-label={`Rôle de ${u.displayName}`}
+                            value={u.role}
+                            onChange={(e) => handleRoleChange(u, e.target.value as UserRole)}
+                            className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs"
+                          >
+                            {(Object.keys(USER_ROLE_LABELS) as UserRole[]).map((role) => (
+                              <option key={role} value={role}>
+                                {USER_ROLE_LABELS[role]}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <span className="text-xs text-slate-700">
+                            {USER_ROLE_LABELS[u.role]}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4">
+                        <div className="flex flex-wrap gap-1.5">
+                          {entities.map((e) => {
+                            const assigned =
+                              u.role === 'super_admin' || u.entityIds.includes(e.id);
+                            return (
+                              <button
+                                key={e.id}
+                                type="button"
+                                disabled={!canEditSettings || u.role === 'super_admin'}
+                                onClick={() => handleToggleUserEntity(u, e.id)}
+                                className={`rounded-md border px-2 py-0.5 text-xs ${
+                                  assigned
+                                    ? 'border-blue-200 bg-blue-50 text-blue-800'
+                                    : 'border-slate-200 bg-slate-50 text-slate-400'
+                                }`}
+                              >
+                                {e.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4">
+                        {canEditSettings ? (
+                          <button
+                            type="button"
+                            disabled={isSelf}
+                            onClick={() => saveUser({ ...u, active: !u.active })}
+                            className={`rounded-md border px-2.5 py-1 text-xs font-medium disabled:opacity-50 ${
+                              u.active
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                : 'border-red-200 bg-red-50 text-red-800'
+                            }`}
+                          >
+                            {u.active ? 'Actif' : 'Suspendu'}
+                          </button>
+                        ) : (
+                          <span className="text-xs text-slate-600">
+                            {u.active ? 'Actif' : 'Suspendu'}
+                          </span>
+                        )}
+                      </td>
+                      {canEditSettings && (
+                        <td className="py-3 px-4 text-right">
+                          <button
+                            type="button"
+                            disabled={isSelf}
+                            onClick={() => setConfirmDeleteUser(u)}
+                            aria-label={`Supprimer ${u.displayName}`}
+                            title={
+                              isSelf
+                                ? 'Impossible de supprimer votre propre compte'
+                                : 'Supprimer cet utilisateur'
+                            }
+                            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2.5 py-1 text-xs font-medium text-red-700 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Supprimer
+                          </button>
+                        </td>
                       )}
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="flex flex-wrap gap-1.5">
-                        {entities.map((e) => {
-                          const assigned =
-                            u.role === 'super_admin' || u.entityIds.includes(e.id);
-                          return (
-                            <button
-                              key={e.id}
-                              type="button"
-                              disabled={!canManageUsers || u.role === 'super_admin'}
-                              onClick={() => handleToggleUserEntity(u, e.id)}
-                              className={`rounded-md border px-2 py-0.5 text-xs ${
-                                assigned
-                                  ? 'border-blue-200 bg-blue-50 text-blue-800'
-                                  : 'border-slate-200 bg-slate-50 text-slate-400'
-                              }`}
-                            >
-                              {e.name}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      {canManageUsers ? (
-                        <button
-                          type="button"
-                          onClick={() => saveUser({ ...u, active: !u.active })}
-                          className={`rounded-md border px-2.5 py-1 text-xs font-medium ${
-                            u.active
-                              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                              : 'border-red-200 bg-red-50 text-red-800'
-                          }`}
-                        >
-                          {u.active ? 'Actif' : 'Suspendu'}
-                        </button>
-                      ) : (
-                        <span className="text-xs text-slate-600">
-                          {u.active ? 'Actif' : 'Suspendu'}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1479,20 +1705,108 @@ export function SettingsPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
             <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
               <TagIcon className="h-4 w-4 text-slate-500" />
-              Tags de qualification
+              Tags de qualification ({tags.length})
             </h2>
-            <div className="flex flex-wrap gap-2">
-              {tags.map((t) => (
-                <span
-                  key={t.id}
-                  className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-800"
-                >
-                  {t.name}
-                </span>
-              ))}
+            <div className="space-y-2">
+              {tags.length === 0 ? (
+                <p className="text-xs text-slate-500">Aucun tag de qualification configuré.</p>
+              ) : (
+                tags.map((t) => {
+                  const isEditing = editingTag?.id === t.id;
+                  return (
+                    <div
+                      key={t.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+                    >
+                      {isEditing ? (
+                        <div className="flex flex-1 flex-wrap items-center gap-2">
+                          <input
+                            type="color"
+                            aria-label={`Couleur du tag ${t.name}`}
+                            value={editTagColor}
+                            onChange={(e) => setEditTagColor(e.target.value)}
+                            className="h-8 w-10 rounded border border-slate-200 bg-white p-0.5 shrink-0"
+                          />
+                          <input
+                            type="text"
+                            aria-label={`Nom du tag ${t.name}`}
+                            value={editTagName}
+                            onChange={(e) => setEditTagName(e.target.value)}
+                            className="flex-1 min-w-[140px] h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleSaveEditedTag(t)}
+                            aria-label={`Enregistrer le tag ${t.name}`}
+                            className="inline-flex h-8 items-center gap-1 rounded-lg bg-[#19283E] px-2.5 text-xs font-medium text-white hover:bg-[#223552]"
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                            Enregistrer
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingTag(null)}
+                            aria-label="Annuler la modification du tag"
+                            className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                            Annuler
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="h-3 w-3 rounded-sm shrink-0"
+                              style={{ backgroundColor: t.color || '#1d4ed8' }}
+                              aria-hidden="true"
+                            />
+                            <span className="text-xs font-medium text-slate-800 truncate">
+                              {t.name}
+                            </span>
+                          </div>
+                          {canEditSettings && (
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingTag(t);
+                                  setEditTagName(t.name);
+                                  setEditTagColor(t.color || '#1d4ed8');
+                                }}
+                                aria-label={`Modifier le tag ${t.name}`}
+                                title="Modifier ce tag"
+                                className="p-1 rounded text-slate-500 hover:bg-white hover:text-[#19283E]"
+                              >
+                                <Edit2 className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteTag(t)}
+                                aria-label={`Supprimer le tag ${t.name}`}
+                                title="Supprimer ce tag"
+                                className="p-1 rounded text-slate-500 hover:bg-red-50 hover:text-red-700"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })
+              )}
             </div>
-            {canWriteCrm && (
+            {canEditSettings && (
               <form onSubmit={handleAddTag} className="flex items-center gap-2 pt-2">
+                <input
+                  type="color"
+                  aria-label="Couleur du nouveau tag"
+                  value={newTagColor}
+                  onChange={(e) => setNewTagColor(e.target.value)}
+                  className="h-9 w-11 rounded border border-slate-200 bg-white p-1 shrink-0"
+                />
                 <input
                   type="text"
                   value={newTagName}
@@ -1518,7 +1832,7 @@ export function SettingsPage() {
             <h2 className="text-base font-semibold text-slate-900">
               Préférences d'affichage
             </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <fieldset disabled={!canEditSettings} className="grid grid-cols-1 sm:grid-cols-2 gap-4 disabled:opacity-75">
               <div>
                 <label htmlFor="pref-currency" className="block text-xs font-medium text-slate-700 mb-1">
                   Devise par défaut
@@ -1550,21 +1864,23 @@ export function SettingsPage() {
                   <option value="cards">Cartes</option>
                 </select>
               </div>
-            </div>
-            <button
-              type="button"
-              onClick={() =>
-                saveSettings({
-                  ...settings,
-                  defaultCurrency: currency,
-                  defaultProspectView: defaultView,
-                })
-              }
-              className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#19283E] px-4 text-sm font-medium text-white hover:bg-[#223552]"
-            >
-              <Save className="h-4 w-4 text-[#C9A125]" />
-              Enregistrer les préférences
-            </button>
+            </fieldset>
+            {canEditSettings && (
+              <button
+                type="button"
+                onClick={() =>
+                  saveSettings({
+                    ...settings,
+                    defaultCurrency: currency,
+                    defaultProspectView: defaultView,
+                  })
+                }
+                className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#19283E] px-4 text-sm font-medium text-white hover:bg-[#223552]"
+              >
+                <Save className="h-4 w-4 text-[#C9A125]" />
+                Enregistrer les préférences
+              </button>
+            )}
           </div>
 
           <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
@@ -1577,22 +1893,346 @@ export function SettingsPage() {
                 ? 'Crée les 4 entités Arena Group, les contacts/entreprises partagés, devis, factures, paiements et séquences de test dans Firestore.'
                 : 'Réinitialise le jeu de données local de démonstration avec les 4 entités Arena Group.'}
             </p>
-            <button
-              type="button"
-              onClick={handleSeed}
-              disabled={seeding}
-              className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-slate-900 px-4 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-            >
-              <Database className="h-4 w-4" />
-              {seeding
-                ? 'Initialisation en cours...'
-                : authMode === 'firebase'
-                ? 'Initialiser Firestore avec les données démo'
-                : 'Réinitialiser la démo locale'}
-            </button>
+            {canEditSettings && (
+              <button
+                type="button"
+                onClick={handleSeed}
+                disabled={seeding}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-slate-200 bg-slate-900 px-4 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+              >
+                <Database className="h-4 w-4" />
+                {seeding
+                  ? 'Initialisation en cours...'
+                  : authMode === 'firebase'
+                  ? 'Initialiser Firestore avec les données démo'
+                  : 'Réinitialiser la démo locale'}
+              </button>
+            )}
           </div>
         </div>
       )}
+
+      {/* Modal modification entité */}
+      <Modal
+        open={Boolean(editingEntity)}
+        onClose={() => {
+          if (!savingEntity) setEditingEntity(null);
+        }}
+        title={editingEntity ? `Modifier l'entité ${editingEntity.name}` : "Modifier l'entité"}
+        subtitle="Modification réservée aux Super Admins."
+      >
+        <form onSubmit={handleSaveEditedEntity} className="space-y-4" noValidate>
+          {editEntityError && (
+            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+              {editEntityError}
+            </div>
+          )}
+          <div>
+            <label htmlFor="edit-ent-name" className="block text-xs font-medium text-slate-700 mb-1">
+              Nom de l&apos;entité *
+            </label>
+            <input
+              id="edit-ent-name"
+              type="text"
+              maxLength={120}
+              value={editEntityName}
+              onChange={(e) => setEditEntityName(e.target.value)}
+              className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="edit-ent-desc" className="block text-xs font-medium text-slate-700 mb-1">
+              Description
+            </label>
+            <textarea
+              id="edit-ent-desc"
+              rows={2}
+              maxLength={400}
+              value={editEntityDesc}
+              onChange={(e) => setEditEntityDesc(e.target.value)}
+              className="w-full rounded-lg border border-slate-200 p-2.5 text-sm"
+            />
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="edit-ent-color" className="block text-xs font-medium text-slate-700 mb-1">
+                Couleur principale
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  id="edit-ent-color"
+                  type="color"
+                  value={editEntityColor}
+                  onChange={(e) => setEditEntityColor(e.target.value)}
+                  className="h-9 w-12 rounded border border-slate-200 p-1 shrink-0"
+                />
+                <input
+                  type="text"
+                  aria-label="Code couleur hexadécimal"
+                  value={editEntityColor}
+                  onChange={(e) => setEditEntityColor(e.target.value)}
+                  className="flex-1 h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
+                />
+              </div>
+            </div>
+            <div>
+              <label htmlFor="edit-ent-logo" className="block text-xs font-medium text-slate-700 mb-1">
+                URL Logo personnalisé (optionnel)
+              </label>
+              <input
+                id="edit-ent-logo"
+                type="url"
+                maxLength={500}
+                value={editEntityLogoUrl}
+                onChange={(e) => setEditEntityLogoUrl(e.target.value)}
+                placeholder="https://... (vide = logo officiel)"
+                className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
+              />
+            </div>
+          </div>
+          <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={editEntityActive}
+              onChange={(e) => setEditEntityActive(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300"
+            />
+            Entité active dans le CRM
+          </label>
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
+            <button
+              type="button"
+              disabled={savingEntity}
+              onClick={() => setEditingEntity(null)}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Annuler
+            </button>
+            <button
+              type="submit"
+              disabled={savingEntity}
+              className="h-9 rounded-lg bg-[#19283E] px-4 text-sm font-medium text-white hover:bg-[#223552] disabled:opacity-50"
+            >
+              {savingEntity ? 'Enregistrement...' : 'Enregistrer'}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal ajout utilisateur */}
+      <Modal
+        open={addUserOpen}
+        onClose={() => {
+          if (!creatingUser) setAddUserOpen(false);
+        }}
+        title="Ajouter un utilisateur"
+        subtitle={
+          authMode === 'firebase'
+            ? 'Crée le compte de connexion Firebase Auth et le profil CRM associé.'
+            : 'Ajoute un collaborateur dans le répertoire CRM.'
+        }
+      >
+        <form onSubmit={handleCreateUser} className="space-y-4" noValidate>
+          {newUserError && (
+            <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+              {newUserError}
+            </div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="new-user-name" className="block text-xs font-medium text-slate-700 mb-1">
+                Nom complet *
+              </label>
+              <input
+                id="new-user-name"
+                type="text"
+                value={newUserName}
+                onChange={(e) => setNewUserName(e.target.value)}
+                placeholder="Ex : Riana Rakoto"
+                className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="new-user-email" className="block text-xs font-medium text-slate-700 mb-1">
+                Email professionnel *
+              </label>
+              <input
+                id="new-user-email"
+                type="email"
+                value={newUserEmail}
+                onChange={(e) => setNewUserEmail(e.target.value)}
+                placeholder="collaborateur@arenagroup.mg"
+                className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
+                required
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label htmlFor="new-user-password" className="block text-xs font-medium text-slate-700 mb-1">
+                Mot de passe provisoire {authMode === 'firebase' ? '*' : '(optionnel en démo)'}
+              </label>
+              <input
+                id="new-user-password"
+                type="password"
+                value={newUserPassword}
+                onChange={(e) => setNewUserPassword(e.target.value)}
+                placeholder="Minimum 6 caractères"
+                className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
+              />
+            </div>
+            <div>
+              <label htmlFor="new-user-role" className="block text-xs font-medium text-slate-700 mb-1">
+                Rôle *
+              </label>
+              <select
+                id="new-user-role"
+                value={newUserRole}
+                onChange={(e) => setNewUserRole(e.target.value as UserRole)}
+                className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
+              >
+                {(Object.keys(USER_ROLE_LABELS) as UserRole[]).map((role) => (
+                  <option key={role} value={role}>
+                    {USER_ROLE_LABELS[role]}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {newUserRole !== 'super_admin' && (
+            <div className="space-y-2">
+              <span className="block text-xs font-medium text-slate-700">Entités autorisées</span>
+              <div className="flex flex-wrap gap-2">
+                {entities.map((ent) => {
+                  const checked = newUserEntities.includes(ent.id);
+                  return (
+                    <label
+                      key={ent.id}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-700 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setNewUserEntities((prev) =>
+                            checked ? prev.filter((id) => id !== ent.id) : [...prev, ent.id]
+                          )
+                        }
+                      />
+                      {ent.name}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
+            <button
+              type="button"
+              disabled={creatingUser}
+              onClick={() => setAddUserOpen(false)}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Annuler
+            </button>
+            <button
+              type="submit"
+              disabled={creatingUser}
+              className="h-9 rounded-lg bg-[#19283E] px-4 text-sm font-medium text-white hover:bg-[#223552] disabled:opacity-50"
+            >
+              {creatingUser ? 'Création...' : "Créer l'utilisateur"}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Modal confirmation suppression utilisateur */}
+      <Modal
+        open={Boolean(confirmDeleteUser)}
+        onClose={() => {
+          if (!deletingUser) setConfirmDeleteUser(null);
+        }}
+        title="Supprimer cet utilisateur ?"
+        subtitle={confirmDeleteUser ? `${confirmDeleteUser.displayName} (${confirmDeleteUser.email})` : undefined}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            La suppression du profil révoque immédiatement ses droits d&apos;accès au CRM Arena Group.
+          </p>
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
+            <button
+              type="button"
+              disabled={deletingUser}
+              onClick={() => setConfirmDeleteUser(null)}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Annuler
+            </button>
+            <button
+              type="button"
+              disabled={deletingUser || !confirmDeleteUser}
+              onClick={async () => {
+                if (!confirmDeleteUser) return;
+                setDeletingUser(true);
+                try {
+                  await deleteUser(confirmDeleteUser.uid);
+                  setConfirmDeleteUser(null);
+                } finally {
+                  setDeletingUser(false);
+                }
+              }}
+              className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+            >
+              {deletingUser ? 'Suppression...' : 'Confirmer la suppression'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Modal confirmation suppression tag */}
+      <Modal
+        open={Boolean(confirmDeleteTag)}
+        onClose={() => {
+          if (!deletingTag) setConfirmDeleteTag(null);
+        }}
+        title="Supprimer ce tag de qualification ?"
+        subtitle={confirmDeleteTag ? confirmDeleteTag.name : undefined}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-600">
+            Ce tag sera retiré de la liste des tags de qualification disponibles dans les paramètres.
+          </p>
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
+            <button
+              type="button"
+              disabled={deletingTag}
+              onClick={() => setConfirmDeleteTag(null)}
+              className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Annuler
+            </button>
+            <button
+              type="button"
+              disabled={deletingTag || !confirmDeleteTag}
+              onClick={async () => {
+                if (!confirmDeleteTag) return;
+                setDeletingTag(true);
+                try {
+                  await deleteTag(confirmDeleteTag.id);
+                  setConfirmDeleteTag(null);
+                } finally {
+                  setDeletingTag(false);
+                }
+              }}
+              className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+            >
+              {deletingTag ? 'Suppression...' : 'Confirmer la suppression'}
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

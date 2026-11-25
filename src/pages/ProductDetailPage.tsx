@@ -39,7 +39,7 @@ export function ProductDetailPage() {
     deals,
     deleteProduct,
   } = useCrm();
-  const { canWriteCrm, user } = useAuth();
+  const { canWriteCrm, canDeleteProduct } = useAuth();
 
   const product = products.find((p) => p.id === id);
 
@@ -139,7 +139,7 @@ export function ProductDetailPage() {
               Modifier la fiche
             </button>
           )}
-          {user?.role === 'super_admin' && !confirmDelete && (
+          {canDeleteProduct && !confirmDelete && (
             <button
               type="button"
               onClick={() => setConfirmDelete(true)}
@@ -149,7 +149,7 @@ export function ProductDetailPage() {
               Supprimer
             </button>
           )}
-          {user?.role === 'super_admin' && confirmDelete && (
+          {canDeleteProduct && confirmDelete && (
             <div className="inline-flex items-center gap-2">
               <button
                 type="button"

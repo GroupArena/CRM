@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildBalanceLinesFromDepositItems,
   buildUnifiedClientHistory,
   computeDocumentTotals,
   computeFinanceKpis,
@@ -11,6 +12,10 @@ import {
   computeSequenceMetrics,
   findDuplicateCompanies,
   findDuplicateContacts,
+  getClientFiscalInfo,
+  getDepositInvoicesForEntity,
+  getDocumentAmountInWordsPrefix,
+  getInvoiceTotalsDisplaySpec,
   getNextSequenceNumber,
   getPaidDepositInvoicesForClient,
   isSkuUnique,
@@ -19,6 +24,7 @@ import {
   recalculateInvoiceWithPayments,
   resolveInvoiceStatus,
   resolveProductUnitPrice,
+  shouldRenderStampAndSignature,
   validateProductInput,
 } from './billingLogic';
 import type {
@@ -126,10 +132,12 @@ test('Duplicate detection and merging for shared companies and contacts', () => 
   const mergedCt = mergeContactRecords(contacts[0], {
     ...contacts[0],
     id: 'ct-2',
+    cin: '101 251 004 812',
     isVip: true,
     tags: ['Direction'],
   });
   assert.equal(mergedCt.isVip, true);
+  assert.equal(mergedCt.cin, '101 251 004 812');
   assert.deepEqual(mergedCt.tags, ['Décideur', 'Direction']);
 });
 
@@ -574,5 +582,170 @@ test('getPaidDepositInvoicesForClient filters paid deposit invoices matching cli
     ['paid-dep-b2c']
   );
 });
+
+test('Balance invoice: computeInvoiceTotals, entity deposit filtering, line cloning, and display labels', () => {
+  const lines = [
+    {
+      id: 'l1',
+      label: 'Domiciliation annuelle',
+      description: 'Pack complet',
+      quantity: 1,
+      unitPrice: 51000000,
+      vatRate: 0,
+      orderIndex: 0,
+    },
+  ];
+
+  const balanceTotals = computeInvoiceTotals(lines, {
+    invoiceType: 'balance',
+    depositPercentage: 30,
+    deductedDepositAmount: 15300000,
+  });
+  assert.equal(balanceTotals.invoiceType, 'balance');
+  assert.equal(balanceTotals.subtotal, 51000000);
+  assert.equal(balanceTotals.depositPercentage, 30);
+  assert.equal(balanceTotals.deductedDepositAmount, 15300000);
+  assert.equal(balanceTotals.total, 35700000);
+
+  const makeDep = (overrides: Partial<Invoice>): Invoice => ({
+    id: 'dep-x',
+    entityId: 'arena-business-center',
+    contactId: 'c1',
+    companyId: 'co1',
+    invoiceNumber: 'FAC-ABC-2026-0001',
+    invoiceType: 'deposit',
+    depositPercentage: 30,
+    status: 'Payée',
+    issueDate: '2026-11-10',
+    dueDate: '2026-11-20',
+    currency: 'MGA',
+    subtotal: 51000000,
+    vatAmount: 0,
+    total: 15300000,
+    paidAmount: 15300000,
+    remainingAmount: 0,
+    legalMentions: '',
+    notes: '',
+    createdByUid: 'u1',
+    createdAt: '2026-11-10T10:00:00Z',
+    updatedAt: '2026-11-10T10:00:00Z',
+    ...overrides,
+  });
+
+  const allInvoices: Invoice[] = [
+    makeDep({ id: 'dep-abc-paid', entityId: 'arena-business-center', status: 'Payée' }),
+    makeDep({ id: 'dep-abc-issued', entityId: 'arena-business-center', status: 'Émise', paidAmount: 0, remainingAmount: 15300000 }),
+    makeDep({ id: 'dep-abc-draft', entityId: 'arena-business-center', status: 'Brouillon' }),
+    makeDep({ id: 'dep-abc-cancelled', entityId: 'arena-business-center', status: 'Annulée' }),
+    makeDep({ id: 'std-abc', entityId: 'arena-business-center', invoiceType: 'standard', depositPercentage: 100 }),
+    makeDep({ id: 'dep-imp-paid', entityId: 'improveo', invoiceNumber: 'FAC-IMP-2026-0001' }),
+  ];
+
+  const abcDeposits = getDepositInvoicesForEntity(allInvoices, {
+    entityId: 'arena-business-center',
+  });
+  assert.deepEqual(
+    abcDeposits.map((i) => i.id),
+    ['dep-abc-paid', 'dep-abc-issued']
+  );
+
+  const impDeposits = getDepositInvoicesForEntity(allInvoices, {
+    entityId: 'improveo',
+  });
+  assert.deepEqual(
+    impDeposits.map((i) => i.id),
+    ['dep-imp-paid']
+  );
+
+  const cloned = buildBalanceLinesFromDepositItems(
+    [
+      {
+        invoiceId: 'dep-abc-paid',
+        productId: 'prod-1',
+        label: 'Domiciliation',
+        description: 'Ligne B',
+        quantity: 2,
+        unitPrice: 1000000,
+        orderIndex: 1,
+      },
+      {
+        invoiceId: 'dep-abc-paid',
+        label: 'Frais dossier',
+        description: 'Ligne A',
+        quantity: 1,
+        unitPrice: 500000,
+        orderIndex: 0,
+      },
+      {
+        invoiceId: 'dep-imp-paid',
+        label: 'Autre entité',
+        quantity: 1,
+        unitPrice: 900000,
+        orderIndex: 0,
+      },
+    ],
+    'dep-abc-paid'
+  );
+  assert.equal(cloned.length, 2);
+  assert.equal(cloned[0].label, 'Frais dossier');
+  assert.equal(cloned[1].label, 'Domiciliation');
+  assert.equal(cloned[1].productId, 'prod-1');
+
+  const balanceSpec = getInvoiceTotalsDisplaySpec({
+    kind: 'invoice',
+    invoiceType: 'balance',
+    subtotal: 51000000,
+    depositPercentage: 30,
+    deductedDepositAmount: 15300000,
+  });
+  assert.equal(balanceSpec.docTitle, 'FACTURE DE SOLDE');
+  assert.equal(balanceSpec.depositRowLabel, 'ACOMPTE PAYÉ (30%)');
+  assert.equal(balanceSpec.netLabel, 'NET À PAYER');
+
+  const depositSpec = getInvoiceTotalsDisplaySpec({
+    kind: 'invoice',
+    invoiceType: 'deposit',
+    subtotal: 51000000,
+    depositPercentage: 30,
+  });
+  assert.equal(depositSpec.docTitle, "FACTURE D'ACOMPTE");
+  assert.equal(depositSpec.depositRowLabel, 'ACOMPTE FACTURÉ (30%)');
+  assert.equal(depositSpec.netLabel, 'NET À PAYER');
+
+  assert.equal(getDocumentAmountInWordsPrefix('quote'), 'Arrêté le présent devis à la somme de ');
+  assert.equal(
+    getDocumentAmountInWordsPrefix('invoice'),
+    'Arrêtée la présente facture à la somme de '
+  );
+  assert.equal(shouldRenderStampAndSignature('quote'), false);
+  assert.equal(shouldRenderStampAndSignature('invoice'), true);
+});
+
+test('Client fiscal info displays CIN for individuals and NIF/STAT/RCS for affiliated companies', () => {
+  const individualInfo = getClientFiscalInfo(null, { cin: ' 101 251 004 812 ' });
+  assert.equal(individualInfo.isIndividual, true);
+  assert.deepEqual(individualInfo.lines, [{ label: 'CIN', value: '101 251 004 812' }]);
+
+  const individualWithoutCin = getClientFiscalInfo(undefined, { cin: '' });
+  assert.equal(individualWithoutCin.isIndividual, true);
+  assert.deepEqual(individualWithoutCin.lines, [{ label: 'CIN', value: '' }]);
+
+  const companyInfo = getClientFiscalInfo(
+    {
+      legalName: 'Véranda Lumière SAS',
+      nif: '4001234567',
+      stat: '46101 11 2020 0 10012',
+      rcs: 'RCS Antananarivo 2020 B 00123',
+    },
+    { cin: '101 251 004 812' }
+  );
+  assert.equal(companyInfo.isIndividual, false);
+  assert.deepEqual(companyInfo.lines, [
+    { label: 'NIF', value: '4001234567' },
+    { label: 'STAT', value: '46101 11 2020 0 10012' },
+    { label: 'RCS', value: 'RCS Antananarivo 2020 B 00123' },
+  ]);
+});
+
 
 

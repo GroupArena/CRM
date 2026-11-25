@@ -176,8 +176,10 @@ export function InvoiceFormModal({
       const today = new Date().toISOString().slice(0, 10);
       const legal = legalSettings.find((l) => l.entityId === resolvedEntity);
       setEntityId(resolvedEntity);
-      setContactId(defaultContactId || contacts[0]?.id || '');
-      setCompanyId(defaultCompanyId || contacts[0]?.companyId || '');
+      const initialCid = defaultContactId || contacts[0]?.id || '';
+      const initialCt = contacts.find((c) => c.id === initialCid);
+      setContactId(initialCid);
+      setCompanyId(defaultCompanyId !== undefined ? defaultCompanyId : (initialCt?.companyId ?? ''));
       setInvoiceType('standard');
       setDepositPercentage(30);
       setDeductedDepositInvoiceId('');
