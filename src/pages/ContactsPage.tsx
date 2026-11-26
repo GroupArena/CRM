@@ -37,12 +37,12 @@ export function ContactsPage() {
       if (!q) return true;
       const comp = companies.find((co) => co.id === c.companyId);
       return (
-        c.fullName.toLowerCase().includes(q) ||
+        (c.fullName ?? '').toLowerCase().includes(q) ||
         (c.cin ?? '').toLowerCase().includes(q) ||
-        c.email.toLowerCase().includes(q) ||
-        c.phone.toLowerCase().includes(q) ||
-        c.whatsapp.toLowerCase().includes(q) ||
-        (comp?.legalName.toLowerCase().includes(q) ?? false)
+        (c.email ?? '').toLowerCase().includes(q) ||
+        (c.phone ?? '').toLowerCase().includes(q) ||
+        (c.whatsapp ?? '').toLowerCase().includes(q) ||
+        (comp?.legalName?.toLowerCase().includes(q) ?? false)
       );
     });
   }, [contacts, companies, search, vipOnly]);

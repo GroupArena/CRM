@@ -25,11 +25,11 @@ export function CompaniesPage() {
       if (vipOnly && !c.isVip) return false;
       if (!q) return true;
       return (
-        c.legalName.toLowerCase().includes(q) ||
-        c.tradeName.toLowerCase().includes(q) ||
-        c.nif.toLowerCase().includes(q) ||
-        c.city.toLowerCase().includes(q) ||
-        c.email.toLowerCase().includes(q)
+        (c.legalName ?? '').toLowerCase().includes(q) ||
+        (c.tradeName ?? '').toLowerCase().includes(q) ||
+        (c.nif ?? '').toLowerCase().includes(q) ||
+        (c.city ?? '').toLowerCase().includes(q) ||
+        (c.email ?? '').toLowerCase().includes(q)
       );
     });
   }, [companies, search, vipOnly]);

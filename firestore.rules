@@ -753,7 +753,7 @@ service cloud.firestore {
     // --- Collections partagées inter-entités : companies & contacts ---
     match /companies/{companyId} {
       allow get: if isActiveUser() && isValidId(companyId) && (isSuperAdmin() || userEntityIds().size() > 0);
-      allow list: if isActiveUser() && resource.data.id is string && (isSuperAdmin() || userEntityIds().size() > 0);
+      allow list: if isActiveUser() && (isSuperAdmin() || userEntityIds().size() > 0);
       allow create: if canWriteCrmData() && isValidId(companyId) && isValidCompany(incoming())
         && incoming().id == companyId
         && incoming().createdAt == request.time
@@ -767,7 +767,7 @@ service cloud.firestore {
 
     match /contacts/{contactId} {
       allow get: if isActiveUser() && isValidId(contactId) && (isSuperAdmin() || userEntityIds().size() > 0);
-      allow list: if isActiveUser() && resource.data.id is string && (isSuperAdmin() || userEntityIds().size() > 0);
+      allow list: if isActiveUser() && (isSuperAdmin() || userEntityIds().size() > 0);
       allow create: if canWriteCrmData() && isValidId(contactId) && isValidContact(incoming())
         && incoming().id == contactId
         && incoming().createdAt == request.time
@@ -1025,8 +1025,8 @@ service cloud.firestore {
 
     // --- Intégrations, Compteurs & Mentions légales ---
     match /integrations/{integrationId} {
-      allow get: if isActiveUser() && isValidId(integrationId) && hasEntityAccess(existing().entityId);
-      allow list: if isActiveUser() && (resource.data.entityId in userEntityIds() || isSuperAdmin());
+      allow get: if isActiveUser() && isValidId(integrationId) && (existing().entityId == 'group' || hasEntityAccess(existing().entityId));
+      allow list: if isActiveUser() && (resource.data.entityId == 'group' || resource.data.entityId in userEntityIds() || isSuperAdmin());
       allow create, update: if isSuperAdmin() && isValidId(integrationId) && isValidIntegration(incoming())
         && incoming().id == integrationId && incoming().updatedAt == request.time;
       allow delete: if isSuperAdmin() && isValidId(integrationId);
