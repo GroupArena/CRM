@@ -85,7 +85,11 @@ import {
   DEMO_SERVICE_REQUESTS,
 } from './seedData';
 import { formatDocumentNumber } from '../utils/billingLogic';
-import { resolveBootstrappedUserProfile } from '../utils/crmLogic';
+import {
+  normalizeProductForWrite,
+  resolveBootstrappedUserProfile,
+  sanitizeUserProfileForWrite,
+} from '../utils/crmLogic';
 
 function toIsoString(value: unknown): string {
   if (!value) return '';
@@ -196,7 +200,8 @@ export async function ensureUserProfile(
 export function subscribeToCollection<T>(
   collectionName: string,
   constraints: QueryConstraint[],
-  onData: (items: T[]) => void
+  onData: (items: T[]) => void,
+  onError?: (error: unknown) => void
 ): Unsubscribe {
   if (!db) return () => {};
   const q = query(collection(db, collectionName), ...constraints);
@@ -211,6 +216,10 @@ export function subscribeToCollection<T>(
     (error) => {
       if (isFirestoreOfflineError(error)) {
         console.warn(`Firestore hors ligne lors de l'écoute de ${collectionName}.`);
+        return;
+      }
+      if (onError) {
+        onError(error);
         return;
       }
       handleFirestoreError(error, OperationType.LIST, collectionName);
@@ -237,7 +246,7 @@ export function buildEntityConstraints(
 
 async function saveStandardDoc<T extends { id: string }>(
   collectionName: string,
-  record: T,
+  record: T | (Record<string, unknown> & { id: string }),
   isNew: boolean,
   hasCreatedAt = true
 ): Promise<void> {
@@ -338,33 +347,58 @@ export async function saveSequenceStepDoc(step: SequenceStep, isNew: boolean): P
 export const saveSequenceEnrollmentDoc = (enr: SequenceEnrollment, isNew: boolean) =>
   saveStandardDoc('sequenceEnrollments', enr, isNew, false);
 
-export const saveProductDoc = (product: Product, isNew: boolean) => {
-  const sanitized: Product = {
-    ...product,
-    sku: (product.sku || '').trim(),
-    folder: (product.folder || '').trim(),
-    imageUrl: (product.imageUrl || '').trim(),
-    productUrl: (product.productUrl || '').trim(),
-    customProperties: (product.customProperties || [])
-      .filter((prop) => prop.key.trim().length > 0)
-      .map((prop) => ({ key: prop.key.trim(), value: prop.value.trim() })),
-    pricingTiers: (product.pricingTiers || []).map((tier) => ({
-      minQty: Math.max(1, Number(tier.minQty) || 1),
-      maxQty:
-        tier.maxQty === undefined || tier.maxQty === null || Number.isNaN(Number(tier.maxQty))
-          ? null
-          : Number(tier.maxQty),
-      unitPrice: Math.max(0, Number(tier.unitPrice) || 0),
-    })),
-    billingDurationCount:
-      product.billingDurationCount === undefined ||
-      product.billingDurationCount === null ||
-      Number.isNaN(Number(product.billingDurationCount))
-        ? undefined
-        : Number(product.billingDurationCount),
-  };
-  return saveStandardDoc('products', sanitized, isNew);
-};
+async function seedMissingCollectionDefaults<T extends { id: string }>(
+  collectionName: string,
+  defaults: T[],
+  excludeId: string,
+  mapPayload: (item: T) => Record<string, unknown>
+): Promise<void> {
+  if (!db) return;
+  const database = db;
+  try {
+    const existingIds = await getExistingDocIds(collectionName);
+    const missingDefaults = defaults.filter(
+      (def) => def.id !== excludeId && !existingIds.has(def.id)
+    );
+    if (missingDefaults.length === 0) return;
+    const batch = writeBatch(database);
+    for (const def of missingDefaults) {
+      batch.set(doc(database, collectionName, def.id), mapPayload(def));
+    }
+    await batch.commit();
+  } catch {
+    // Non bloquant : l'opération principale a déjà été exécutée
+  }
+}
+
+export async function saveProductDoc(product: Product, isNew: boolean): Promise<void> {
+  const payload = normalizeProductForWrite(product);
+  await saveStandardDoc('products', payload, isNew);
+  await seedMissingCollectionDefaults('products', DEMO_PRODUCTS, product.id, (def) => {
+    const clean = normalizeProductForWrite(def);
+    delete clean.createdAt;
+    delete clean.updatedAt;
+    return {
+      ...clean,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+  });
+}
+
+export async function deleteProductDoc(productId: string): Promise<void> {
+  await seedMissingCollectionDefaults('products', DEMO_PRODUCTS, productId, (def) => {
+    const clean = normalizeProductForWrite(def);
+    delete clean.createdAt;
+    delete clean.updatedAt;
+    return {
+      ...clean,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+  });
+  await deleteCollectionDoc('products', productId);
+}
 
 export const saveComplaintDoc = (complaint: Complaint, isNew: boolean) =>
   saveStandardDoc('complaints', complaint, isNew);
@@ -680,10 +714,10 @@ export async function saveEntityDoc(entity: CrmEntity, isNew: boolean): Promise<
 export async function createUserDoc(user: UserProfile): Promise<void> {
   if (!db) throw new Error('Firestore non initialisé.');
   const ref = doc(db, 'users', user.uid);
-  const { createdAt: _c, updatedAt: _u, ...rest } = user;
+  const clean = sanitizeUserProfileForWrite(user);
   try {
     await setDoc(ref, {
-      ...rest,
+      ...clean,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
@@ -695,14 +729,25 @@ export async function createUserDoc(user: UserProfile): Promise<void> {
 export async function updateUserDoc(user: UserProfile): Promise<void> {
   if (!db) throw new Error('Firestore non initialisé.');
   const ref = doc(db, 'users', user.uid);
-  const { createdAt: _c, updatedAt: _u, ...rest } = user;
+  const clean = sanitizeUserProfileForWrite(user);
+  let effectiveOp = OperationType.UPDATE;
   try {
-    await updateDoc(ref, {
-      ...rest,
-      updatedAt: serverTimestamp(),
-    });
+    const existingSnap = await getDoc(ref);
+    if (!existingSnap.exists()) {
+      effectiveOp = OperationType.CREATE;
+      await setDoc(ref, {
+        ...clean,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await updateDoc(ref, {
+        ...clean,
+        updatedAt: serverTimestamp(),
+      });
+    }
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}`);
+    handleFirestoreError(error, effectiveOp, `users/${user.uid}`);
   }
 }
 
@@ -710,8 +755,29 @@ export async function deleteUserDoc(uid: string): Promise<void> {
   return deleteCollectionDoc('users', uid);
 }
 
-export const saveTagDoc = (tag: CrmTag, isNew: boolean) =>
-  saveStandardDoc('tags', tag, isNew);
+export async function saveTagDoc(tag: CrmTag, isNew: boolean): Promise<void> {
+  await saveStandardDoc('tags', tag, isNew);
+  await seedMissingCollectionDefaults('tags', DEFAULT_TAGS, tag.id, (def) => {
+    const { createdAt: _c, updatedAt: _u, ...rest } = def;
+    return {
+      ...rest,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+  });
+}
+
+export async function deleteTagDoc(tagId: string): Promise<void> {
+  await seedMissingCollectionDefaults('tags', DEFAULT_TAGS, tagId, (def) => {
+    const { createdAt: _c, updatedAt: _u, ...rest } = def;
+    return {
+      ...rest,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    };
+  });
+  await deleteCollectionDoc('tags', tagId);
+}
 
 export async function saveSettingsDoc(settings: CrmSettings): Promise<void> {
   if (!db) throw new Error('Firestore non initialisé.');
@@ -844,8 +910,10 @@ export async function seedFirestoreDatabase(currentUid: string): Promise<void> {
     });
 
     await queueIfMissing('products', DEMO_PRODUCTS, (product) => {
-      const { createdAt: _c, updatedAt: _u, ...rest } = product;
-      return { ...rest, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
+      const clean = normalizeProductForWrite(product);
+      delete clean.createdAt;
+      delete clean.updatedAt;
+      return { ...clean, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
     });
 
     await queueIfMissing('leads', DEMO_LEADS, (lead) => {

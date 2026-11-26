@@ -81,6 +81,7 @@ export function SettingsPage() {
     saveIntegration,
     saveSettings,
     seedFirestore,
+    addToast,
   } = useCrm();
   const { canManageSettings, user, authMode } = useAuth();
   const canEditSettings = canManageSettings;
@@ -218,6 +219,14 @@ export function SettingsPage() {
     }
   };
 
+  const reportSettingsError = (title: string, err: unknown) => {
+    addToast({
+      type: 'error',
+      title,
+      description: err instanceof Error ? err.message : 'Erreur lors de la sauvegarde.',
+    });
+  };
+
   const handleCreateEntity = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canEditSettings || !newEntityName.trim()) return;
@@ -238,9 +247,13 @@ export function SettingsPage() {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    await saveEntity(entity, true);
-    setNewEntityName('');
-    setNewEntityDesc('');
+    try {
+      await saveEntity(entity, true);
+      setNewEntityName('');
+      setNewEntityDesc('');
+    } catch (err) {
+      reportSettingsError("Impossible de créer l'entité", err);
+    }
   };
 
   const openEditEntityModal = (entity: CrmEntity) => {
@@ -338,22 +351,39 @@ export function SettingsPage() {
       createdAt: now,
       updatedAt: now,
     };
-    await saveProduct(product, true);
-    setProdName('');
-    setProdSku('');
+    try {
+      await saveProduct(product, true);
+      setProdName('');
+      setProdSku('');
+    } catch (err) {
+      setProdError(err instanceof Error ? err.message : 'Erreur lors de la création du produit.');
+      reportSettingsError("Impossible d'ajouter le produit", err);
+    }
   };
 
-  const handleToggleUserEntity = (targetUser: UserProfile, entityId: string) => {
+  const handleToggleUserEntity = async (targetUser: UserProfile, entityId: string) => {
     if (!canEditSettings) return;
     const nextIds = targetUser.entityIds.includes(entityId)
       ? targetUser.entityIds.filter((id) => id !== entityId)
       : [...targetUser.entityIds, entityId];
-    saveUser({ ...targetUser, entityIds: nextIds });
+    try {
+      await saveUser({ ...targetUser, entityIds: nextIds });
+    } catch (err) {
+      reportSettingsError("Impossible de modifier l'accès entité", err);
+    }
   };
 
-  const handleRoleChange = (targetUser: UserProfile, role: UserRole) => {
+  const handleRoleChange = async (targetUser: UserProfile, role: UserRole) => {
     if (!canEditSettings) return;
-    saveUser({ ...targetUser, role });
+    const nextEntityIds =
+      role === 'super_admin'
+        ? entities.map((e) => e.id)
+        : targetUser.entityIds;
+    try {
+      await saveUser({ ...targetUser, role, entityIds: nextEntityIds });
+    } catch (err) {
+      reportSettingsError('Impossible de modifier le rôle', err);
+    }
   };
 
   const handleCreateUser = async (e: React.FormEvent) => {
@@ -400,32 +430,40 @@ export function SettingsPage() {
   const handleAddTag = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canEditSettings || !newTagName.trim()) return;
-    await saveTag(
-      {
-        id: `tag-${Date.now()}`,
-        entityId: 'group',
-        name: newTagName.trim(),
-        color: newTagColor || '#1d4ed8',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      true
-    );
-    setNewTagName('');
+    try {
+      await saveTag(
+        {
+          id: `tag-${Date.now()}`,
+          entityId: 'group',
+          name: newTagName.trim(),
+          color: newTagColor || '#1d4ed8',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        true
+      );
+      setNewTagName('');
+    } catch (err) {
+      reportSettingsError("Impossible d'ajouter le tag", err);
+    }
   };
 
   const handleSaveEditedTag = async (tag: CrmTag) => {
     if (!canEditSettings || !editTagName.trim()) return;
-    await saveTag(
-      {
-        ...tag,
-        name: editTagName.trim(),
-        color: editTagColor || tag.color || '#1d4ed8',
-        updatedAt: new Date().toISOString(),
-      },
-      false
-    );
-    setEditingTag(null);
+    try {
+      await saveTag(
+        {
+          ...tag,
+          name: editTagName.trim(),
+          color: editTagColor || tag.color || '#1d4ed8',
+          updatedAt: new Date().toISOString(),
+        },
+        false
+      );
+      setEditingTag(null);
+    } catch (err) {
+      reportSettingsError('Impossible de mettre à jour le tag', err);
+    }
   };
 
   const handleSeed = async () => {
@@ -640,7 +678,13 @@ export function SettingsPage() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => saveEntity({ ...entity, active: !entity.active }, false)}
+                          onClick={async () => {
+                            try {
+                              await saveEntity({ ...entity, active: !entity.active }, false);
+                            } catch (err) {
+                              reportSettingsError("Impossible de modifier le statut de l'entité", err);
+                            }
+                          }}
                           className="h-8 rounded-lg border border-[#E1E4EA] px-2.5 text-xs font-medium text-[#19283E] hover:bg-[#E1E4EA]/40 whitespace-nowrap"
                         >
                           {entity.active ? 'Désactiver' : 'Activer'}
@@ -815,7 +859,13 @@ export function SettingsPage() {
                         {canEditSettings ? (
                           <button
                             type="button"
-                            onClick={() => saveProduct({ ...p, active: !p.active }, false)}
+                            onClick={async () => {
+                              try {
+                                await saveProduct({ ...p, active: !p.active }, false);
+                              } catch (err) {
+                                reportSettingsError('Impossible de modifier le statut du produit', err);
+                              }
+                            }}
                             className={`rounded border px-2 py-0.5 text-xs font-medium ${
                               p.active
                                 ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
@@ -1332,12 +1382,21 @@ export function SettingsPage() {
                   {canEditSettings && (
                     <button
                       type="button"
-                      onClick={() =>
-                        saveLegalSetting(
-                          draft,
-                          !legalSettings.some((l) => l.entityId === entity.id)
-                        )
-                      }
+                      onClick={async () => {
+                        try {
+                          await saveLegalSetting(
+                            draft,
+                            !legalSettings.some((l) => l.entityId === entity.id)
+                          );
+                          setLegalDrafts((prev) => {
+                            const next = { ...prev };
+                            delete next[entity.id];
+                            return next;
+                          });
+                        } catch (err) {
+                          reportSettingsError("Impossible d'enregistrer les mentions légales", err);
+                        }
+                      }}
                       className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#19283E] px-4 text-sm font-medium text-white hover:bg-[#223552]"
                     >
                       <Save className="h-4 w-4 text-[#C9A125]" />
@@ -1446,16 +1505,20 @@ export function SettingsPage() {
             {canEditSettings && (
               <button
                 type="button"
-                onClick={() =>
-                  saveIntegration(
-                    {
-                      ...outlookDraft,
-                      enabled: Boolean(outlookDraft.accountEmail || outlookDraft.clientId),
-                      status: outlookDraft.clientId ? 'ready' : 'disconnected',
-                    },
-                    !integrations.some((i) => i.id === outlookDraft.id)
-                  )
-                }
+                onClick={async () => {
+                  try {
+                    await saveIntegration(
+                      {
+                        ...outlookDraft,
+                        enabled: Boolean(outlookDraft.accountEmail || outlookDraft.clientId),
+                        status: outlookDraft.clientId ? 'ready' : 'disconnected',
+                      },
+                      !integrations.some((i) => i.id === outlookDraft.id)
+                    );
+                  } catch (err) {
+                    reportSettingsError("Impossible d'enregistrer la configuration Outlook", err);
+                  }
+                }}
                 className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#19283E] px-4 text-sm font-medium text-white hover:bg-[#223552]"
               >
                 <Plug className="h-4 w-4" />
@@ -1515,15 +1578,19 @@ export function SettingsPage() {
               <div>
                 <button
                   type="button"
-                  onClick={() =>
-                    saveIntegration(
-                      {
-                        ...waDraft,
-                        status: waDraft.enabled ? 'ready' : 'disconnected',
-                      },
-                      !integrations.some((i) => i.id === waDraft.id)
-                    )
-                  }
+                  onClick={async () => {
+                    try {
+                      await saveIntegration(
+                        {
+                          ...waDraft,
+                          status: waDraft.enabled ? 'ready' : 'disconnected',
+                        },
+                        !integrations.some((i) => i.id === waDraft.id)
+                      );
+                    } catch (err) {
+                      reportSettingsError("Impossible d'enregistrer la configuration WhatsApp", err);
+                    }
+                  }}
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-emerald-600 px-4 text-sm font-medium text-white hover:bg-emerald-700"
                 >
                   <Save className="h-4 w-4" />
@@ -1633,7 +1700,13 @@ export function SettingsPage() {
                           <button
                             type="button"
                             disabled={isSelf}
-                            onClick={() => saveUser({ ...u, active: !u.active })}
+                            onClick={async () => {
+                              try {
+                                await saveUser({ ...u, active: !u.active });
+                              } catch (err) {
+                                reportSettingsError("Impossible de modifier le statut de l'utilisateur", err);
+                              }
+                            }}
                             className={`rounded-md border px-2.5 py-1 text-xs font-medium disabled:opacity-50 ${
                               u.active
                                 ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
@@ -1868,13 +1941,17 @@ export function SettingsPage() {
             {canEditSettings && (
               <button
                 type="button"
-                onClick={() =>
-                  saveSettings({
-                    ...settings,
-                    defaultCurrency: currency,
-                    defaultProspectView: defaultView,
-                  })
-                }
+                onClick={async () => {
+                  try {
+                    await saveSettings({
+                      ...settings,
+                      defaultCurrency: currency,
+                      defaultProspectView: defaultView,
+                    });
+                  } catch (err) {
+                    reportSettingsError("Impossible d'enregistrer les préférences", err);
+                  }
+                }}
                 className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#19283E] px-4 text-sm font-medium text-white hover:bg-[#223552]"
               >
                 <Save className="h-4 w-4 text-[#C9A125]" />
@@ -2179,6 +2256,8 @@ export function SettingsPage() {
                 try {
                   await deleteUser(confirmDeleteUser.uid);
                   setConfirmDeleteUser(null);
+                } catch (err) {
+                  reportSettingsError("Impossible de supprimer l'utilisateur", err);
                 } finally {
                   setDeletingUser(false);
                 }
@@ -2222,6 +2301,8 @@ export function SettingsPage() {
                 try {
                   await deleteTag(confirmDeleteTag.id);
                   setConfirmDeleteTag(null);
+                } catch (err) {
+                  reportSettingsError('Impossible de supprimer le tag', err);
                 } finally {
                   setDeletingTag(false);
                 }

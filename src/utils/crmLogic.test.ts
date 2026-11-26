@@ -15,14 +15,16 @@ import {
   getAuthorizedEntities,
   isBootstrappedSuperAdminEmail,
   mergeDefaultRecordsById,
+  normalizeProductForWrite,
   resolveBootstrappedUserProfile,
   resolveEffectiveActionStatus,
+  sanitizeUserProfileForWrite,
   setActiveDefaultCurrency,
   validateActionInput,
   validateDealInput,
   validateProspectInput,
 } from './crmLogic';
-import type { CrmAction, CrmEntity, Deal, Prospect, UserProfile } from '../types';
+import type { CrmAction, CrmEntity, Deal, Product, Prospect, UserProfile } from '../types';
 
 const ENTITIES: CrmEntity[] = [
   {
@@ -255,6 +257,7 @@ test('Currency formatting supports MGA (Ar) as default out of the box', () => {
 
 test('Bootstrapped Super Admin detection and existing reader profile promotion', () => {
   assert.equal(isBootstrappedSuperAdminEmail('navalona@arenabusinesscenter.com'), true);
+  assert.equal(isBootstrappedSuperAdminEmail('navalona@group-arena.com'), true);
   assert.equal(isBootstrappedSuperAdminEmail('  Navalona.Rajaonarivelo@gmail.com '), true);
   assert.equal(isBootstrappedSuperAdminEmail('collaborateur@arenabusinesscenter.com'), false);
   assert.equal(isBootstrappedSuperAdminEmail(null), false);
@@ -371,3 +374,84 @@ test('mergeDefaultRecordsById preserves unseeded defaults and applies remote ove
     { id: 'custom-entity', name: 'Arena Tech' },
   ]);
 });
+
+test('Active super_admin with missing entityIds is synced automatically', () => {
+  const entityIds = ['arena-business-center', 'improveo', 'arena-studio-comm', 'maison-artisanat'];
+  const promotedUser: UserProfile = {
+    uid: 'uid-promoted',
+    email: 'direction@arena.mg',
+    displayName: 'Direction',
+    role: 'super_admin',
+    entityIds: [],
+    active: true,
+    createdAt: '2026-11-20T00:00:00Z',
+    updatedAt: '2026-11-20T00:00:00Z',
+  };
+  const synced = resolveBootstrappedUserProfile(
+    'uid-promoted',
+    'direction@arena.mg',
+    'Direction',
+    promotedUser,
+    entityIds
+  );
+  assert.equal(synced.needsUpdate, true);
+  assert.deepEqual(synced.profile.entityIds, entityIds);
+});
+
+test('sanitizeUserProfileForWrite strips normalized id and timestamps to match Firestore isValidUser', () => {
+  const hydrated = {
+    ...SUPER_ADMIN,
+    id: 'u-admin',
+    entityIds: ['arena-business-center', 'arena-business-center', 'improveo'],
+  };
+  const clean = sanitizeUserProfileForWrite(hydrated);
+  assert.equal('id' in clean, false);
+  assert.equal('createdAt' in clean, false);
+  assert.equal('updatedAt' in clean, false);
+  assert.deepEqual(Object.keys(clean).sort(), [
+    'active',
+    'displayName',
+    'email',
+    'entityIds',
+    'role',
+    'uid',
+  ]);
+  assert.deepEqual(clean.entityIds, ['arena-business-center', 'improveo']);
+});
+
+test('normalizeProductForWrite omits blank sku so Firestore rules allow saving', () => {
+  const baseProduct: Product = {
+    id: 'prod-1',
+    name: 'Audit Conseil',
+    sku: '   ',
+    description: '',
+    folder: ' Conseil ',
+    category: 'Services',
+    customProperties: [{ key: 'Durée', value: '2j' }, { key: ' ', value: 'ignored' }],
+    price: 500000,
+    unitCost: 100000,
+    pricingType: 'fixed',
+    pricingTiers: [],
+    billingFrequency: 'one_time',
+    billingDurationUnit: 'unlimited',
+    currency: 'MGA',
+    unit: 'forfait',
+    vatRate: 0,
+    imageUrl: ' ',
+    productUrl: ' ',
+    active: true,
+    entityIds: ['improveo'],
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+  };
+
+  const withoutSku = normalizeProductForWrite(baseProduct);
+  assert.equal('sku' in withoutSku, false);
+  assert.equal(withoutSku.folder, 'Conseil');
+  assert.deepEqual(withoutSku.customProperties, [{ key: 'Durée', value: '2j' }]);
+
+  const withSku = normalizeProductForWrite({ ...baseProduct, sku: ' SKU-42 ' });
+  assert.equal(withSku.sku, 'SKU-42');
+});
+
+

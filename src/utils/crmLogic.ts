@@ -5,6 +5,7 @@ import type {
   Deal,
   EntityScope,
   PipelineStage,
+  Product,
   Prospect,
   UserProfile,
 } from '../types';
@@ -12,6 +13,7 @@ import type {
 export const BOOTSTRAPPED_SUPER_ADMIN_EMAILS = [
   'navalona.rajaonarivelo@gmail.com',
   'navalona@arenabusinesscenter.com',
+  'navalona@group-arena.com',
 ] as const;
 
 export function isBootstrappedSuperAdminEmail(email?: string | null): boolean {
@@ -53,7 +55,11 @@ export function resolveBootstrappedUserProfile(
     };
   }
 
-  if (!isBootstrapped) {
+  const shouldEnsureSuperAdminEntities =
+    isBootstrapped ||
+    (existingProfile.role === 'super_admin' && existingProfile.active);
+
+  if (!shouldEnsureSuperAdminEntities) {
     return {
       needsCreate: false,
       needsUpdate: false,
@@ -65,10 +71,11 @@ export function resolveBootstrappedUserProfile(
     ? existingProfile.entityIds
     : [];
   const missingEntity = allEntityIds.some((id) => !existingEntities.includes(id));
-  const needsUpdate =
-    existingProfile.role !== 'super_admin' ||
-    !existingProfile.active ||
-    missingEntity;
+  const needsUpdate = isBootstrapped
+    ? existingProfile.role !== 'super_admin' ||
+      !existingProfile.active ||
+      missingEntity
+    : missingEntity;
 
   if (!needsUpdate) {
     return {
@@ -86,11 +93,74 @@ export function resolveBootstrappedUserProfile(
       ...existingProfile,
       uid: existingProfile.uid || uid,
       email: existingProfile.email || cleanEmail,
-      role: 'super_admin',
+      role: isBootstrapped ? 'super_admin' : existingProfile.role,
       entityIds: mergedEntities,
-      active: true,
+      active: isBootstrapped ? true : existingProfile.active,
     },
   };
+}
+
+export function sanitizeUserProfileForWrite(
+  user: UserProfile & { id?: string }
+): Record<string, unknown> {
+  const {
+    id: _ignoredId,
+    createdAt: _ignoredCreatedAt,
+    updatedAt: _ignoredUpdatedAt,
+    ...rest
+  } = user;
+  const clean: Record<string, unknown> = {
+    uid: rest.uid,
+    email: rest.email.trim(),
+    displayName: rest.displayName.trim() || rest.email.trim().split('@')[0] || 'Utilisateur',
+    role: rest.role,
+    entityIds: Array.isArray(rest.entityIds)
+      ? Array.from(new Set(rest.entityIds.filter((v) => typeof v === 'string' && v.trim().length > 0))).slice(0, 10)
+      : [],
+    active: Boolean(rest.active),
+  };
+  return clean;
+}
+
+export function normalizeProductForWrite(
+  product: Product
+): Record<string, unknown> & { id: string } {
+  const cleanSku = (product.sku || '').trim();
+  const payload: Record<string, unknown> & { id: string } = {
+    ...product,
+    folder: (product.folder || '').trim(),
+    imageUrl: (product.imageUrl || '').trim(),
+    productUrl: (product.productUrl || '').trim(),
+    customProperties: (product.customProperties || [])
+      .filter((prop) => prop.key.trim().length > 0)
+      .map((prop) => ({ key: prop.key.trim(), value: prop.value.trim() })),
+    pricingTiers: (product.pricingTiers || []).map((tier) => ({
+      minQty: Math.max(1, Number(tier.minQty) || 1),
+      maxQty:
+        tier.maxQty === undefined || tier.maxQty === null || Number.isNaN(Number(tier.maxQty))
+          ? null
+          : Number(tier.maxQty),
+      unitPrice: Math.max(0, Number(tier.unitPrice) || 0),
+    })),
+  };
+
+  if (cleanSku) {
+    payload.sku = cleanSku;
+  } else {
+    delete payload.sku;
+  }
+
+  if (
+    product.billingDurationCount === undefined ||
+    product.billingDurationCount === null ||
+    Number.isNaN(Number(product.billingDurationCount))
+  ) {
+    delete payload.billingDurationCount;
+  } else {
+    payload.billingDurationCount = Number(product.billingDurationCount);
+  }
+
+  return payload;
 }
 
 export function canViewAllEntities(user: UserProfile | null): boolean {

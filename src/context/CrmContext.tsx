@@ -94,7 +94,9 @@ import {
   buildEntityConstraints,
   createUserDoc,
   deleteCollectionDoc,
+  deleteProductDoc,
   deleteProspectDoc,
+  deleteTagDoc,
   deleteUserDoc,
   ensureUserProfile,
   markNotificationReadDoc,
@@ -703,97 +705,202 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
 
     const entityConstraints = (field = 'entityId') =>
       buildEntityConstraints(field, currentUser, selectedEntityId);
+    const integrationConstraints = isSuperAdminUser
+      ? []
+      : [
+          where(
+            'entityId',
+            'in',
+            selectedEntityId === 'all' ? tagScopes : ['group', selectedEntityId]
+          ),
+        ];
+
+    const notifiedSubErrors = new Set<string>();
+    const onSubError = (collectionName: string) => (error: unknown) => {
+      console.error(`Erreur écoute Firestore (${collectionName}):`, error);
+      if (!notifiedSubErrors.has(collectionName)) {
+        notifiedSubErrors.add(collectionName);
+        addToast({
+          type: 'error',
+          title: 'Synchronisation Firestore bloquée',
+          description: `Impossible de lire la collection « ${collectionName} » (permissions insuffisantes).`,
+        });
+      }
+    };
 
     const unsubs = [
       subscribeToCollection<CrmEntity>(
         'entities',
         isSuperAdminUser ? [] : [where('active', '==', true)],
-        (items) => setEntities(items.length > 0 ? items : DEFAULT_ENTITIES)
+        (items) => setEntities(items.length > 0 ? items : DEFAULT_ENTITIES),
+        onSubError('entities')
       ),
       subscribeToCollection<UserProfile>(
         'users',
         isSuperAdminUser ? [] : [where('uid', '==', currentUser.uid)],
-        setUsers
+        setUsers,
+        onSubError('users')
       ),
       // Shared across all 4 entities
       ...(hasAssignedEntities
         ? [
-            subscribeToCollection<Company>('companies', [], setCompanies),
-            subscribeToCollection<Contact>('contacts', [], setContacts),
+            subscribeToCollection<Company>('companies', [], setCompanies, onSubError('companies')),
+            subscribeToCollection<Contact>('contacts', [], setContacts, onSubError('contacts')),
           ]
         : []),
       subscribeToCollection<Product>(
         'products',
         isManagerPlus ? [] : [where('active', '==', true)],
-        (items) => setProducts(items.length > 0 ? items : DEMO_PRODUCTS)
+        (items) => setProducts(items.length > 0 ? items : DEMO_PRODUCTS),
+        onSubError('products')
       ),
       subscribeToCollection<CrmTag>(
         'tags',
         isSuperAdminUser ? [] : [where('entityId', 'in', tagScopes)],
-        (items) => setTags(items.length > 0 ? items : DEFAULT_TAGS)
+        (items) => setTags(items.length > 0 ? items : DEFAULT_TAGS),
+        onSubError('tags')
       ),
       subscribeToCollection<LegalSetting>(
         'legalSettings',
-        hasAssignedEntities ? entityConstraints() : [where('entityId', '==', '__none__')],
-        (items) => setLegalSettings(mergeDefaultRecordsById(DEFAULT_LEGAL_SETTINGS, items))
+        isSuperAdminUser
+          ? []
+          : hasAssignedEntities
+          ? entityConstraints()
+          : [where('entityId', '==', '__none__')],
+        (items) => setLegalSettings(mergeDefaultRecordsById(DEFAULT_LEGAL_SETTINGS, items)),
+        onSubError('legalSettings')
       ),
       // Entity-scoped
       subscribeToCollection<Prospect>(
         'prospects',
         entityConstraints('primaryEntityId'),
-        setProspects
+        setProspects,
+        onSubError('prospects')
       ),
-      subscribeToCollection<Lead>('leads', entityConstraints(), setLeads),
-      subscribeToCollection<FollowUpSequence>('sequences', entityConstraints(), setSequences),
-      subscribeToCollection<SequenceStep>('sequenceSteps', entityConstraints(), setSequenceSteps),
+      subscribeToCollection<Lead>('leads', entityConstraints(), setLeads, onSubError('leads')),
+      subscribeToCollection<FollowUpSequence>(
+        'sequences',
+        entityConstraints(),
+        setSequences,
+        onSubError('sequences')
+      ),
+      subscribeToCollection<SequenceStep>(
+        'sequenceSteps',
+        entityConstraints(),
+        setSequenceSteps,
+        onSubError('sequenceSteps')
+      ),
       subscribeToCollection<SequenceEnrollment>(
         'sequenceEnrollments',
         entityConstraints(),
-        setSequenceEnrollments
+        setSequenceEnrollments,
+        onSubError('sequenceEnrollments')
       ),
-      subscribeToCollection<CrmAction>('actions', entityConstraints(), setActions),
-      subscribeToCollection<Deal>('opportunities', entityConstraints(), setDeals),
-      subscribeToCollection<Pipeline>('pipelines', entityConstraints(), (items) =>
-        setPipelines(mergeDefaultRecordsById(DEFAULT_PIPELINES, items))
+      subscribeToCollection<CrmAction>(
+        'actions',
+        entityConstraints(),
+        setActions,
+        onSubError('actions')
       ),
-      subscribeToCollection<PipelineStage>('pipelineStages', entityConstraints(), (items) =>
-        setStages(mergeDefaultRecordsById(DEFAULT_PIPELINE_STAGES, items))
+      subscribeToCollection<Deal>(
+        'opportunities',
+        entityConstraints(),
+        setDeals,
+        onSubError('opportunities')
       ),
-      subscribeToCollection<Quote>('quotes', entityConstraints(), setQuotes),
-      subscribeToCollection<QuoteItem>('quoteItems', entityConstraints(), setQuoteItems),
-      subscribeToCollection<Invoice>('invoices', entityConstraints(), setInvoices),
-      subscribeToCollection<InvoiceItem>('invoiceItems', entityConstraints(), setInvoiceItems),
-      subscribeToCollection<Payment>('payments', entityConstraints(), setPayments),
-      subscribeToCollection<Complaint>('complaints', entityConstraints(), setComplaints),
-      subscribeToCollection<ServiceRequest>('serviceRequests', entityConstraints(), setServiceRequests),
+      subscribeToCollection<Pipeline>(
+        'pipelines',
+        isSuperAdminUser ? [] : entityConstraints(),
+        (items) => setPipelines(mergeDefaultRecordsById(DEFAULT_PIPELINES, items)),
+        onSubError('pipelines')
+      ),
+      subscribeToCollection<PipelineStage>(
+        'pipelineStages',
+        isSuperAdminUser ? [] : entityConstraints(),
+        (items) => setStages(mergeDefaultRecordsById(DEFAULT_PIPELINE_STAGES, items)),
+        onSubError('pipelineStages')
+      ),
+      subscribeToCollection<Quote>('quotes', entityConstraints(), setQuotes, onSubError('quotes')),
+      subscribeToCollection<QuoteItem>(
+        'quoteItems',
+        entityConstraints(),
+        setQuoteItems,
+        onSubError('quoteItems')
+      ),
+      subscribeToCollection<Invoice>(
+        'invoices',
+        entityConstraints(),
+        setInvoices,
+        onSubError('invoices')
+      ),
+      subscribeToCollection<InvoiceItem>(
+        'invoiceItems',
+        entityConstraints(),
+        setInvoiceItems,
+        onSubError('invoiceItems')
+      ),
+      subscribeToCollection<Payment>(
+        'payments',
+        entityConstraints(),
+        setPayments,
+        onSubError('payments')
+      ),
+      subscribeToCollection<Complaint>(
+        'complaints',
+        entityConstraints(),
+        setComplaints,
+        onSubError('complaints')
+      ),
+      subscribeToCollection<ServiceRequest>(
+        'serviceRequests',
+        entityConstraints(),
+        setServiceRequests,
+        onSubError('serviceRequests')
+      ),
       subscribeToCollection<SatisfactionSurvey>(
         'satisfactionSurveys',
         entityConstraints(),
-        setSatisfactionSurveys
+        setSatisfactionSurveys,
+        onSubError('satisfactionSurveys')
       ),
-      subscribeToCollection<IntegrationSetting>('integrations', entityConstraints(), (items) =>
-        setIntegrations(mergeDefaultRecordsById(DEFAULT_INTEGRATIONS, items))
+      subscribeToCollection<IntegrationSetting>(
+        'integrations',
+        integrationConstraints,
+        (items) => setIntegrations(mergeDefaultRecordsById(DEFAULT_INTEGRATIONS, items)),
+        onSubError('integrations')
       ),
-      subscribeToCollection<NumberingCounter>('numberingCounters', entityConstraints(), setNumberingCounters),
-      subscribeToCollection<AuditLog>('auditLogs', entityConstraints(), setAuditLogs),
+      subscribeToCollection<NumberingCounter>(
+        'numberingCounters',
+        entityConstraints(),
+        setNumberingCounters,
+        onSubError('numberingCounters')
+      ),
+      subscribeToCollection<AuditLog>(
+        'auditLogs',
+        entityConstraints(),
+        setAuditLogs,
+        onSubError('auditLogs')
+      ),
       subscribeToCollection<CrmNotification>(
         'notifications',
         entityConstraints(),
-        setNotifications
+        setNotifications,
+        onSubError('notifications')
       ),
       subscribeToCollection<CrmSettings>(
         'settings',
         [where('scope', '==', 'global')],
         (items) => {
           if (items.length > 0) setSettings(items[0]);
-        }
+        },
+        onSubError('settings')
       ),
     ];
 
     return () => {
       unsubs.forEach((fn) => fn());
     };
-  }, [authMode, currentUser, selectedEntityId]);
+  }, [authMode, currentUser, selectedEntityId, addToast]);
 
   const authorizedEntities = useMemo(
     () => getAuthorizedEntities(currentUser, entities),
@@ -1040,7 +1147,11 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         auditLogs: [log, ...prev.auditLogs],
       }));
     } else if (authMode === 'firebase') {
-      await appendAuditLog(log);
+      try {
+        await appendAuditLog(log);
+      } catch (err) {
+        console.warn('Écriture du journal d’audit ignorée :', err);
+      }
     }
   };
 
@@ -1839,7 +1950,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         products: prev.products.filter((p) => p.id !== productId),
       }));
     } else {
-      await deleteCollectionDoc('products', productId);
+      await deleteProductDoc(productId);
     }
     if (target) {
       await recordLog(
@@ -2633,7 +2744,15 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
 
   const saveUser = async (user: UserProfile) => {
     if (!assertSuperAdminSettings()) return;
-    const updated = { ...user, updatedAt: new Date().toISOString() };
+    const syncedEntityIds =
+      user.role === 'super_admin'
+        ? Array.from(new Set([...entities.map((e) => e.id), ...(user.entityIds || [])])).slice(0, 10)
+        : user.entityIds;
+    const updated: UserProfile = {
+      ...user,
+      entityIds: syncedEntityIds,
+      updatedAt: new Date().toISOString(),
+    };
     if (authMode === 'demo') {
       persistDemoState((prev) => ({
         ...prev,
@@ -2781,7 +2900,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         tags: prev.tags.filter((t) => t.id !== tagId),
       }));
     } else {
-      await deleteCollectionDoc('tags', tagId);
+      await deleteTagDoc(tagId);
     }
     addToast({
       type: 'info',
