@@ -19,6 +19,7 @@ import {
 } from './branding';
 import {
   computeEuroConversion,
+  formatInlineAddress,
   getClientFiscalInfo,
   getDocumentAmountInWordsPrefix,
   getInvoiceTotalsDisplaySpec,
@@ -371,15 +372,15 @@ export async function buildArenaA4Pdf(
     doc.text(`À l'attention de : ${ctx.contact.fullName}`, 14, clientY);
     clientY += 4;
   }
-  if (ctx.company?.address) {
-    const compAddr = doc.splitTextToSize(ctx.company.address, 92);
+  const clientAddress = formatInlineAddress(
+    ctx.company?.address,
+    ctx.company?.city,
+    ctx.company?.country
+  );
+  if (clientAddress) {
+    const compAddr = doc.splitTextToSize(clientAddress, 92);
     doc.text(compAddr, 14, clientY);
     clientY += compAddr.length * 4;
-  }
-  const cityCountry = [ctx.company?.city, ctx.company?.country].filter(Boolean).join(' ');
-  if (cityCountry) {
-    doc.text(cityCountry, 14, clientY);
-    clientY += 4;
   }
   const clientFiscal = getClientFiscalInfo(ctx.company, ctx.contact);
   for (const fiscalLine of clientFiscal.lines) {

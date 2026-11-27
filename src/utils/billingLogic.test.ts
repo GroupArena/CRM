@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildBalanceLinesFromDepositItems,
+  buildCatalogOptions,
   buildUnifiedClientHistory,
   computeDocumentTotals,
   computeFinanceKpis,
@@ -10,8 +11,11 @@ import {
   computeProductMargin,
   computeRevenueByEntity,
   computeSequenceMetrics,
+  DEFAULT_PRODUCT_CATEGORIES,
+  DEFAULT_PRODUCT_FOLDERS,
   findDuplicateCompanies,
   findDuplicateContacts,
+  formatInlineAddress,
   getClientFiscalInfo,
   getDepositInvoicesForEntity,
   getDocumentAmountInWordsPrefix,
@@ -746,6 +750,60 @@ test('Client fiscal info displays CIN for individuals and NIF/STAT/RCS for affil
     { label: 'RCS', value: 'RCS Antananarivo 2020 B 00123' },
   ]);
 });
+
+test('formatInlineAddress formats "Adresse, Ville, Pays" on one line and omits commas for empty fields', () => {
+  assert.equal(
+    formatInlineAddress('Lot III V 19 A Anosizato Est I', '101 Antananarivo', 'Madagascar'),
+    'Lot III V 19 A Anosizato Est I, 101 Antananarivo, Madagascar'
+  );
+  assert.equal(
+    formatInlineAddress('', '101 Antananarivo', 'Madagascar'),
+    '101 Antananarivo, Madagascar'
+  );
+  assert.equal(
+    formatInlineAddress('Lot III V 19 A Anosizato Est I', '', 'Madagascar'),
+    'Lot III V 19 A Anosizato Est I, Madagascar'
+  );
+  assert.equal(
+    formatInlineAddress('Lot III V 19 A Anosizato Est I', '101 Antananarivo', ''),
+    'Lot III V 19 A Anosizato Est I, 101 Antananarivo'
+  );
+  assert.equal(formatInlineAddress('   ', undefined, 'Madagascar'), 'Madagascar');
+  assert.equal(formatInlineAddress('', '   ', null), '');
+  assert.equal(
+    formatInlineAddress('Lot III V 19 A,', ' 101 Antananarivo ', 'Madagascar'),
+    'Lot III V 19 A, 101 Antananarivo, Madagascar'
+  );
+});
+
+test('buildCatalogOptions deduplicates defaults, existing product values, and custom additions', () => {
+  const folderOpts = buildCatalogOptions(
+    ['Domiciliation Tana', 'hébergement & bureaux', '   '],
+    DEFAULT_PRODUCT_FOLDERS,
+    'Archive 2026'
+  );
+  assert.ok(folderOpts.includes('Catalogue général'));
+  assert.ok(folderOpts.includes('Domiciliation Tana'));
+  assert.ok(folderOpts.includes('Archive 2026'));
+  assert.equal(
+    folderOpts.filter((f) => f.toLowerCase() === 'hébergement & bureaux').length,
+    1
+  );
+
+  const categoryOpts = buildCatalogOptions(
+    ['Pack VIP', 'services'],
+    DEFAULT_PRODUCT_CATEGORIES,
+    'Événementiel'
+  );
+  assert.ok(categoryOpts.includes('Services'));
+  assert.ok(categoryOpts.includes('Pack VIP'));
+  assert.ok(categoryOpts.includes('Événementiel'));
+  assert.equal(
+    categoryOpts.filter((c) => c.toLowerCase() === 'services').length,
+    1
+  );
+});
+
 
 
 

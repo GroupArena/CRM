@@ -688,7 +688,9 @@ export async function createUserDoc(user: UserProfile): Promise<void> {
 
 export async function updateUserDoc(user: UserProfile): Promise<void> {
   if (!db) throw new Error('Firestore non initialisé.');
-  const ref = doc(db, 'users', user.uid);
+  const docId = ((user as UserProfile & { id?: string }).id || user.uid || '').trim();
+  if (!docId) throw new Error('Identifiant utilisateur manquant.');
+  const ref = doc(db, 'users', docId);
   const clean = sanitizeUserProfileForWrite(user);
   let effectiveOp = OperationType.UPDATE;
   try {
@@ -697,17 +699,33 @@ export async function updateUserDoc(user: UserProfile): Promise<void> {
       effectiveOp = OperationType.CREATE;
       await setDoc(ref, {
         ...clean,
+        uid: (clean.uid as string) || docId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
     } else {
-      await updateDoc(ref, {
+      const existingData = existingSnap.data() as Record<string, unknown>;
+      const rawCreatedAt = existingData.createdAt;
+      const isFirestoreTimestamp =
+        rawCreatedAt instanceof Timestamp ||
+        (typeof rawCreatedAt === 'object' &&
+          rawCreatedAt !== null &&
+          'toDate' in rawCreatedAt &&
+          typeof (rawCreatedAt as { toDate?: unknown }).toDate === 'function');
+      const existingUid =
+        typeof existingData.uid === 'string' && existingData.uid.trim().length > 0
+          ? existingData.uid.trim()
+          : docId;
+
+      await setDoc(ref, {
         ...clean,
+        uid: existingUid,
+        createdAt: isFirestoreTimestamp ? rawCreatedAt : serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
     }
   } catch (error) {
-    handleFirestoreError(error, effectiveOp, `users/${user.uid}`);
+    handleFirestoreError(error, effectiveOp, `users/${docId}`);
   }
 }
 

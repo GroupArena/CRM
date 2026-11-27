@@ -370,5 +370,37 @@ test('buildArenaA4Pdf embeds Poppins & Montserrat TrueType fonts on A4 for both 
     commonCtx
   );
   assert.equal(balancePdf.fontsEmbedded, true);
+
+  const partialAddressPdf = await buildArenaA4Pdf(
+    {
+      kind: 'quote',
+      documentNumber: 'DEV-IMP-2026-0099',
+      entityId: 'improveo',
+      issueDate: '2026-11-25',
+      secondaryDate: '2026-12-25',
+      currency: 'MGA',
+      subtotal: 1200000,
+      total: 1200000,
+      items: [
+        {
+          label: 'Diagnostic RH',
+          quantity: 1,
+          unitPrice: 1200000,
+          lineTotal: 1200000,
+        },
+      ],
+    },
+    {
+      ...commonCtx,
+      company: {
+        ...commonCtx.company,
+        address: 'Lot III V 19 A Anosizato Est I',
+        city: '',
+        country: 'Madagascar',
+      },
+    }
+  );
+  assert.equal(partialAddressPdf.fontsEmbedded, true);
 });
+
 

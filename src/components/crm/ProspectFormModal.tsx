@@ -55,7 +55,7 @@ export function ProspectFormModal({
   const [estimatedValue, setEstimatedValue] = useState('0');
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
-  const [country, setCountry] = useState('France');
+  const [country, setCountry] = useState('');
   const [consentMarketing, setConsentMarketing] = useState(false);
   const [gdprConsentDate, setGdprConsentDate] = useState('');
   const [nextActionDate, setNextActionDate] = useState('');
@@ -85,7 +85,7 @@ export function ProspectFormModal({
       setEstimatedValue(String(initialProspect.estimatedValue || 0));
       setAddress(initialProspect.address);
       setCity(initialProspect.city);
-      setCountry(initialProspect.country || 'France');
+      setCountry(initialProspect.country ?? '');
       setConsentMarketing(initialProspect.consentMarketing);
       setGdprConsentDate(initialProspect.gdprConsentDate);
       setNextActionDate(initialProspect.nextActionDate);
@@ -109,7 +109,7 @@ export function ProspectFormModal({
       setEstimatedValue('0');
       setAddress('');
       setCity('');
-      setCountry('France');
+      setCountry('');
       setConsentMarketing(false);
       setGdprConsentDate(new Date().toISOString().slice(0, 10));
       setNextActionDate('');
@@ -463,7 +463,7 @@ export function ProspectFormModal({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
           <div className="sm:col-span-2">
             <label htmlFor="prospect-address" className="block text-xs font-medium text-slate-700 mb-1">
               Adresse
@@ -473,6 +473,7 @@ export function ProspectFormModal({
               type="text"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
+              placeholder="Ex : Lot III V 19 A Anosizato Est I"
               className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm focus:border-blue-600 focus:outline-none"
             />
           </div>
@@ -485,6 +486,20 @@ export function ProspectFormModal({
               type="text"
               value={city}
               onChange={(e) => setCity(e.target.value)}
+              placeholder="Ex : 101 Antananarivo"
+              className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm focus:border-blue-600 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label htmlFor="prospect-country" className="block text-xs font-medium text-slate-700 mb-1">
+              Pays
+            </label>
+            <input
+              id="prospect-country"
+              type="text"
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+              placeholder="Ex : Madagascar"
               className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm focus:border-blue-600 focus:outline-none"
             />
           </div>

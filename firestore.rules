@@ -729,8 +729,11 @@ service cloud.firestore {
           (request.auth.uid == userId && incoming().uid == request.auth.uid && incoming().role == 'reader' && incoming().entityIds.size() == 0 && incoming().active == true)
         );
       allow update: if isVerified() && isValidId(userId) && isValidUser(incoming())
-        && incoming().uid == existing().uid
-        && incoming().createdAt == existing().createdAt
+        && ((!('uid' in existing()) && incoming().uid == userId) || ('uid' in existing() && incoming().uid == existing().uid))
+        && (
+          ('createdAt' in existing() && existing().createdAt is timestamp && incoming().createdAt == existing().createdAt) ||
+          ((!('createdAt' in existing()) || !(existing().createdAt is timestamp)) && incoming().createdAt == request.time)
+        )
         && incoming().updatedAt == request.time
         && (
           isSuperAdmin() ||

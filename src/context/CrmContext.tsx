@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   onAuthStateChanged,
   sendEmailVerification,
@@ -354,6 +354,7 @@ interface CrmContextValue {
   saveLegalSetting: (legal: LegalSetting, isNew: boolean) => Promise<void>;
   saveEntity: (entity: CrmEntity, isNew: boolean) => Promise<void>;
   saveUser: (user: UserProfile) => Promise<void>;
+  patchUser: (uid: string, updater: (latest: UserProfile) => UserProfile) => Promise<void>;
   createManagedUser: (payload: CreateManagedUserPayload) => Promise<UserProfile>;
   deleteUser: (uid: string) => Promise<void>;
   saveTag: (tag: CrmTag, isNew: boolean) => Promise<void>;
@@ -504,6 +505,13 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
   const [notifications, setNotifications] = useState<CrmNotification[]>([]);
   const [settings, setSettings] = useState<CrmSettings>(DEFAULT_SETTINGS);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+
+  const usersRef = useRef<UserProfile[]>(users);
+  useEffect(() => {
+    usersRef.current = users;
+  }, [users]);
+  const pendingUserWritesRef = useRef<Map<string, number>>(new Map());
+  const userWriteQueueRef = useRef<Map<string, Promise<void>>>(new Map());
 
   useEffect(() => {
     setActiveDefaultCurrency(settings.defaultCurrency);
@@ -789,7 +797,41 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       subscribeToCollection<UserProfile>(
         'users',
         isSuperAdminUser ? [] : [where('uid', '==', currentUser.uid)],
-        setUsers,
+        (items) => {
+          const normalized = items.map((item) => {
+            const withId = item as UserProfile & { id?: string };
+            return {
+              ...item,
+              uid: item.uid || withId.id || '',
+              entityIds: Array.isArray(item.entityIds) ? item.entityIds : [],
+            };
+          });
+          setUsers((prev) => {
+            const pendingMap = pendingUserWritesRef.current;
+            const prevByUid = new Map(prev.map((u) => [u.uid, u]));
+            const merged = normalized.map((remote) =>
+              (pendingMap.get(remote.uid) ?? 0) > 0 && prevByUid.has(remote.uid)
+                ? prevByUid.get(remote.uid)!
+                : remote
+            );
+            usersRef.current = merged;
+            return merged;
+          });
+          const selfRemote = normalized.find((u) => u.uid === currentUser.uid);
+          if (selfRemote && (pendingUserWritesRef.current.get(currentUser.uid) ?? 0) === 0) {
+            setCurrentUser((prev) => {
+              if (!prev) return prev;
+              const sameRole = prev.role === selfRemote.role;
+              const sameActive = prev.active === selfRemote.active;
+              const sameName = prev.displayName === selfRemote.displayName;
+              const sameEntities =
+                prev.entityIds.length === selfRemote.entityIds.length &&
+                prev.entityIds.every((id, idx) => id === selfRemote.entityIds[idx]);
+              if (sameRole && sameActive && sameName && sameEntities) return prev;
+              return { ...prev, ...selfRemote };
+            });
+          }
+        },
         onSubError('users')
       ),
       // Shared across all 4 entities
@@ -2794,26 +2836,88 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     addToast({ type: 'success', title: isNew ? 'Entité créée' : 'Entité mise à jour' });
   };
 
-  const saveUser = async (user: UserProfile) => {
+  const persistUserUpdate = async (
+    targetUid: string,
+    computeNext: (latest: UserProfile) => UserProfile
+  ) => {
     if (!assertSuperAdminSettings()) return;
+    const matchUser = (u: UserProfile) => {
+      const withId = u as UserProfile & { id?: string };
+      return u.uid === targetUid || withId.id === targetUid;
+    };
+    const previousUsers = usersRef.current;
+    const latest = previousUsers.find(matchUser);
+    if (!latest) return;
+
+    const draft = computeNext(latest);
     const syncedEntityIds =
-      user.role === 'super_admin'
-        ? Array.from(new Set([...entities.map((e) => e.id), ...(user.entityIds || [])])).slice(0, 10)
-        : user.entityIds;
+      draft.role === 'super_admin'
+        ? Array.from(new Set([...entities.map((e) => e.id), ...(draft.entityIds || [])])).slice(0, 10)
+        : Array.from(new Set((draft.entityIds || []).filter(Boolean))).slice(0, 10);
+
     const updated: UserProfile = {
-      ...user,
+      ...draft,
       entityIds: syncedEntityIds,
       updatedAt: new Date().toISOString(),
     };
+
+    const nextUsers = previousUsers.map((u) => (matchUser(u) ? updated : u));
+    usersRef.current = nextUsers;
+    setUsers(nextUsers);
+    if (currentUser && matchUser(currentUser)) {
+      setCurrentUser(updated);
+    }
+
     if (authMode === 'demo') {
       persistDemoState((prev) => ({
         ...prev,
         users: prev.users.map((u) => (u.uid === updated.uid ? updated : u)),
       }));
-    } else {
-      await updateUserDoc(updated);
+      addToast({ type: 'success', title: 'Rôle et accès enregistrés', description: updated.displayName });
+      return;
     }
-    addToast({ type: 'success', title: 'Rôle et accès enregistrés', description: user.displayName });
+
+    const pendingCount = (pendingUserWritesRef.current.get(updated.uid) ?? 0) + 1;
+    pendingUserWritesRef.current.set(updated.uid, pendingCount);
+
+    const prevWrite = userWriteQueueRef.current.get(updated.uid) ?? Promise.resolve();
+    const currentWrite = prevWrite
+      .catch(() => undefined)
+      .then(async () => {
+        await updateUserDoc(updated);
+      });
+    userWriteQueueRef.current.set(updated.uid, currentWrite);
+
+    try {
+      await currentWrite;
+      addToast({ type: 'success', title: 'Rôle et accès enregistrés', description: updated.displayName });
+    } catch (err) {
+      const currentPending = pendingUserWritesRef.current.get(updated.uid) ?? 1;
+      if (currentPending <= 1) {
+        usersRef.current = previousUsers;
+        setUsers(previousUsers);
+        const prevSelf = previousUsers.find((u) => currentUser && matchUser(u));
+        if (prevSelf && currentUser && matchUser(currentUser)) {
+          setCurrentUser(prevSelf);
+        }
+      }
+      throw err;
+    } finally {
+      const nextCount = Math.max(0, (pendingUserWritesRef.current.get(updated.uid) ?? 1) - 1);
+      if (nextCount === 0) {
+        pendingUserWritesRef.current.delete(updated.uid);
+      } else {
+        pendingUserWritesRef.current.set(updated.uid, nextCount);
+      }
+    }
+  };
+
+  const saveUser = async (user: UserProfile) => {
+    await persistUserUpdate(user.uid, () => user);
+  };
+
+  const patchUser = async (uid: string, updater: (latest: UserProfile) => UserProfile) => {
+    await persistUserUpdate(uid, updater);
   };
 
   const createManagedUser = async (payload: CreateManagedUserPayload): Promise<UserProfile> => {
@@ -3126,6 +3230,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         saveLegalSetting,
         saveEntity,
         saveUser,
+        patchUser,
         createManagedUser,
         deleteUser,
         saveTag,

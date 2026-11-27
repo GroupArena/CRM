@@ -1240,3 +1240,50 @@ export function buildMailtoLink(email: string, subject?: string, body?: string):
   const qs = params.toString();
   return `mailto:${encodeURIComponent(email || '')}${qs ? `?${qs}` : ''}`;
 }
+
+export function formatInlineAddress(
+  address?: string | null,
+  city?: string | null,
+  country?: string | null
+): string {
+  return [address, city, country]
+    .map((part) => (part ?? '').trim().replace(/^,+|,+$/g, '').trim())
+    .filter((part) => part.length > 0)
+    .join(', ');
+}
+
+export const DEFAULT_PRODUCT_FOLDERS = [
+  'Catalogue général',
+  'Hébergement & Bureaux',
+  'Conseil & Formation',
+  'Studio & Communication',
+  'Artisanat & Décoration',
+] as const;
+
+export const DEFAULT_PRODUCT_CATEGORIES = [
+  'Services',
+  'Conseil',
+  'Formation',
+  'Domiciliation',
+  'Communication',
+  'Artisanat',
+  'Abonnement',
+] as const;
+
+export function buildCatalogOptions(
+  existingValues: Array<string | undefined | null>,
+  defaults: readonly string[],
+  ...extraValues: Array<string | undefined | null>
+): string[] {
+  const seen = new Map<string, string>();
+  for (const raw of [...defaults, ...existingValues, ...extraValues]) {
+    const trimmed = (raw ?? '').trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLocaleLowerCase('fr');
+    if (!seen.has(key)) {
+      seen.set(key, trimmed);
+    }
+  }
+  return Array.from(seen.values()).sort((a, b) => a.localeCompare(b, 'fr'));
+}
+

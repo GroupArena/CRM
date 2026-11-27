@@ -29,6 +29,7 @@ import {
   formatDateFr,
   formatDateTimeFr,
 } from '../utils/crmLogic';
+import { formatInlineAddress } from '../utils/billingLogic';
 
 type DetailTab =
   | 'informations'
@@ -249,9 +250,7 @@ export function ProspectDetailPage() {
                   <MapPin className="h-3.5 w-3.5" /> Localisation
                 </dt>
                 <dd className="mt-1 font-medium text-slate-900">
-                  {[prospect.address, prospect.city, prospect.country]
-                    .filter(Boolean)
-                    .join(', ') || '—'}
+                  {formatInlineAddress(prospect.address, prospect.city, prospect.country) || '—'}
                 </dd>
               </div>
               <div>

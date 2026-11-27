@@ -28,7 +28,7 @@ export function CompanyFormModal({
   const [rcs, setRcs] = useState('');
   const [address, setAddress] = useState('');
   const [city, setCity] = useState('');
-  const [country, setCountry] = useState('France');
+  const [country, setCountry] = useState('');
   const [phone, setPhone] = useState('');
   const [whatsapp, setWhatsapp] = useState('');
   const [email, setEmail] = useState('');
@@ -51,7 +51,7 @@ export function CompanyFormModal({
       setRcs(initialCompany.rcs ?? '');
       setAddress(initialCompany.address);
       setCity(initialCompany.city);
-      setCountry(initialCompany.country);
+      setCountry(initialCompany.country ?? '');
       setPhone(initialCompany.phone);
       setWhatsapp(initialCompany.whatsapp);
       setEmail(initialCompany.email);
@@ -68,7 +68,7 @@ export function CompanyFormModal({
       setRcs('');
       setAddress('');
       setCity('');
-      setCountry('France');
+      setCountry('');
       setPhone('');
       setWhatsapp('');
       setEmail('');
@@ -309,7 +309,7 @@ export function CompanyFormModal({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
           <div className="sm:col-span-2">
             <label htmlFor="comp-address" className="block text-xs font-medium text-slate-700 mb-1">
               Adresse
@@ -319,6 +319,7 @@ export function CompanyFormModal({
               type="text"
               value={address}
               onChange={(e) => setAddress(e.target.value)}
+              placeholder="Ex : Lot III V 19 A Anosizato Est I"
               className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
             />
           </div>
@@ -331,6 +332,20 @@ export function CompanyFormModal({
               type="text"
               value={city}
               onChange={(e) => setCity(e.target.value)}
+              placeholder="Ex : 101 Antananarivo"
+              className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
+            />
+          </div>
+          <div>
+            <label htmlFor="comp-country" className="block text-xs font-medium text-slate-700 mb-1">
+              Pays
+            </label>
+            <input
+              id="comp-country"
+              type="text"
+              value={country}
+              onChange={(e) => setCountry(e.target.value)}
+              placeholder="Ex : Madagascar"
               className="w-full h-9 rounded-lg border border-slate-200 px-3 text-sm"
             />
           </div>

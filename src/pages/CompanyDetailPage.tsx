@@ -13,6 +13,7 @@ import { ClientHistoryTimeline } from '../components/crm/ClientHistoryTimeline';
 import { CompanyFormModal } from '../components/crm/CompanyFormModal';
 import { ContactFormModal } from '../components/crm/ContactFormModal';
 import { formatCurrency, formatDateFr } from '../utils/crmLogic';
+import { formatInlineAddress } from '../utils/billingLogic';
 
 type CompanyTab = 'history' | 'contacts' | 'opportunities' | 'quotes' | 'invoices' | 'payments';
 
@@ -121,8 +122,9 @@ export function CompanyDetailPage() {
         </div>
         <div>
           <p className="text-xs text-slate-500">Siège & Adresse</p>
-          <p className="text-slate-900 mt-1">{company.address || '—'}</p>
-          <p className="text-slate-600">{company.city} {company.country}</p>
+          <p className="text-slate-900 mt-1">
+            {formatInlineAddress(company.address, company.city, company.country) || '—'}
+          </p>
         </div>
         <div>
           <p className="text-xs text-slate-500">Coordonnées</p>

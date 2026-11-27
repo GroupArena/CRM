@@ -5,6 +5,8 @@ import type { Company, Contact, CrmEntity, InvoiceType, LegalSetting } from '../
 import { getEntityInvoiceTheme } from '../../utils/branding';
 import {
   computeEuroConversion,
+  formatInlineAddress,
+  getClientFiscalInfo,
   getDocumentAmountInWordsPrefix,
   getInvoiceTotalsDisplaySpec,
   shouldRenderStampAndSignature,
@@ -111,6 +113,8 @@ export function A4DocumentSheet({
   }, []);
 
   const theme = getEntityInvoiceTheme(entityId, entity?.color);
+  const clientFiscal = getClientFiscalInfo(company, contact);
+  const clientAddressLine = formatInlineAddress(company?.address, company?.city, company?.country);
 
   const {
     docTitle,
@@ -205,6 +209,7 @@ export function A4DocumentSheet({
                       entityId={entityId}
                       variant="light"
                       alt={entity?.name ?? 'Logo entité'}
+                      customUrl={entity?.logoUrl?.trim() || undefined}
                       className="h-full w-auto max-w-full object-contain object-left"
                     />
                   </div>
@@ -239,13 +244,12 @@ export function A4DocumentSheet({
                     {company?.legalName && contact?.fullName && (
                       <p className="text-slate-600">À l&apos;attention de : {contact.fullName}</p>
                     )}
-                    {company?.address && <p>{company.address}</p>}
-                    {(company?.city || company?.country) && (
-                      <p>{[company.city, company.country].filter(Boolean).join(' ')}</p>
-                    )}
-                    <p>NIF: {company?.nif || ''}</p>
-                    <p>STAT: {company?.stat || ''}</p>
-                    <p>RCS: {company?.rcs || ''}</p>
+                    {clientAddressLine && <p>{clientAddressLine}</p>}
+                    {clientFiscal.lines.map((line) => (
+                      <p key={line.label}>
+                        {line.label}: {line.value}
+                      </p>
+                    ))}
                     <p>Téléphone : {company?.phone || contact?.phone || ''}</p>
                     <p>Mail : {company?.email || contact?.email || ''}</p>
                   </div>

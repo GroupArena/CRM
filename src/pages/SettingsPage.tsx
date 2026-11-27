@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Building2,
@@ -38,7 +38,12 @@ import {
   type UserRole,
 } from '../types';
 import { formatCurrency } from '../utils/crmLogic';
-import { validateProductInput } from '../utils/billingLogic';
+import {
+  buildCatalogOptions,
+  DEFAULT_PRODUCT_CATEGORIES,
+  DEFAULT_PRODUCT_FOLDERS,
+  validateProductInput,
+} from '../utils/billingLogic';
 import {
   ARENA_PALETTE_SWATCHES,
   ARENA_SLOGANS,
@@ -48,6 +53,7 @@ import {
 } from '../utils/branding';
 import { processSignatureOrStampFile } from '../utils/imageUpload';
 import { BrandLogo } from '../components/ui/BrandLogo';
+import { CatalogSelectWithAdd } from '../components/crm/CatalogSelectWithAdd';
 import { Modal } from '../components/ui/Modal';
 
 type SettingsTab =
@@ -72,6 +78,7 @@ export function SettingsPage() {
     settings,
     saveEntity,
     saveUser,
+    patchUser,
     createManagedUser,
     deleteUser,
     saveTag,
@@ -145,6 +152,30 @@ export function SettingsPage() {
   const [prodUnit, setProdUnit] = useState('forfait');
   const [prodError, setProdError] = useState<string | null>(null);
   const [prodEntities, setProdEntities] = useState<string[]>(['arena-business-center']);
+  const [customFolders, setCustomFolders] = useState<string[]>([]);
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
+
+  const catalogFolderOptions = useMemo(
+    () =>
+      buildCatalogOptions(
+        products.map((p) => p.folder),
+        DEFAULT_PRODUCT_FOLDERS,
+        ...customFolders,
+        prodFolder
+      ),
+    [products, customFolders, prodFolder]
+  );
+
+  const catalogCategoryOptions = useMemo(
+    () =>
+      buildCatalogOptions(
+        products.map((p) => p.category),
+        DEFAULT_PRODUCT_CATEGORIES,
+        ...customCategories,
+        prodCategory
+      ),
+    [products, customCategories, prodCategory]
+  );
 
   // Mentions légales édition locale
   const [legalDrafts, setLegalDrafts] = useState<Record<string, LegalSetting>>({});
@@ -363,11 +394,13 @@ export function SettingsPage() {
 
   const handleToggleUserEntity = async (targetUser: UserProfile, entityId: string) => {
     if (!canEditSettings) return;
-    const nextIds = targetUser.entityIds.includes(entityId)
-      ? targetUser.entityIds.filter((id) => id !== entityId)
-      : [...targetUser.entityIds, entityId];
     try {
-      await saveUser({ ...targetUser, entityIds: nextIds });
+      await patchUser(targetUser.uid, (latest) => {
+        const nextIds = latest.entityIds.includes(entityId)
+          ? latest.entityIds.filter((id) => id !== entityId)
+          : [...latest.entityIds, entityId];
+        return { ...latest, entityIds: nextIds };
+      });
     } catch (err) {
       reportSettingsError("Impossible de modifier l'accès entité", err);
     }
@@ -375,12 +408,14 @@ export function SettingsPage() {
 
   const handleRoleChange = async (targetUser: UserProfile, role: UserRole) => {
     if (!canEditSettings) return;
-    const nextEntityIds =
-      role === 'super_admin'
-        ? entities.map((e) => e.id)
-        : targetUser.entityIds;
     try {
-      await saveUser({ ...targetUser, role, entityIds: nextEntityIds });
+      await patchUser(targetUser.uid, (latest) => {
+        const nextEntityIds =
+          role === 'super_admin'
+            ? entities.map((e) => e.id)
+            : latest.entityIds;
+        return { ...latest, role, entityIds: nextEntityIds };
+      });
     } catch (err) {
       reportSettingsError('Impossible de modifier le rôle', err);
     }
@@ -922,12 +957,16 @@ export function SettingsPage() {
                   placeholder="UGS (SKU) auto si vide"
                   className="h-9 rounded-lg border border-slate-200 px-3 text-sm font-sans tabular-nums"
                 />
-                <input
-                  type="text"
+                <CatalogSelectWithAdd
+                  id="settings-prod-folder"
+                  ariaLabel="Dossier de classement"
                   value={prodFolder}
-                  onChange={(e) => setProdFolder(e.target.value)}
-                  placeholder="Dossier"
-                  className="h-9 rounded-lg border border-slate-200 px-3 text-sm"
+                  onChange={setProdFolder}
+                  options={catalogFolderOptions}
+                  onAddCustomOption={(next) => setCustomFolders((prev) => [...prev, next])}
+                  addOptionLabel="+ Ajouter un dossier..."
+                  addPlaceholder="Nouveau dossier..."
+                  className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
                 />
                 <input
                   type="number"
@@ -949,12 +988,16 @@ export function SettingsPage() {
                 />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <input
-                  type="text"
+                <CatalogSelectWithAdd
+                  id="settings-prod-category"
+                  ariaLabel="Catégorie"
                   value={prodCategory}
-                  onChange={(e) => setProdCategory(e.target.value)}
-                  placeholder="Catégorie"
-                  className="h-9 rounded-lg border border-slate-200 px-3 text-sm"
+                  onChange={setProdCategory}
+                  options={catalogCategoryOptions}
+                  onAddCustomOption={(next) => setCustomCategories((prev) => [...prev, next])}
+                  addOptionLabel="+ Ajouter une catégorie..."
+                  addPlaceholder="Nouvelle catégorie..."
+                  className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
                 />
                 <input
                   type="text"
@@ -1702,7 +1745,7 @@ export function SettingsPage() {
                             disabled={isSelf}
                             onClick={async () => {
                               try {
-                                await saveUser({ ...u, active: !u.active });
+                                await patchUser(u.uid, (latest) => ({ ...latest, active: !latest.active }));
                               } catch (err) {
                                 reportSettingsError("Impossible de modifier le statut de l'utilisateur", err);
                               }

@@ -15,11 +15,15 @@ import {
   type ProductPricingType,
 } from '../../types';
 import {
+  buildCatalogOptions,
   computeProductMargin,
+  DEFAULT_PRODUCT_CATEGORIES,
+  DEFAULT_PRODUCT_FOLDERS,
   isSkuUnique,
   validateProductInput,
 } from '../../utils/billingLogic';
 import { formatCurrency } from '../../utils/crmLogic';
+import { CatalogSelectWithAdd } from './CatalogSelectWithAdd';
 
 interface ProductFormModalProps {
   open: boolean;
@@ -59,12 +63,29 @@ export function ProductFormModal({ open, onClose, initialProduct }: ProductFormM
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const existingFolders = useMemo(
+  const [customFolders, setCustomFolders] = useState<string[]>([]);
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
+
+  const folderOptions = useMemo(
     () =>
-      Array.from(
-        new Set(products.map((p) => p.folder).filter((f): f is string => Boolean(f?.trim())))
-      ).sort((a, b) => a.localeCompare(b)),
-    [products]
+      buildCatalogOptions(
+        products.map((p) => p.folder),
+        DEFAULT_PRODUCT_FOLDERS,
+        ...customFolders,
+        folder
+      ),
+    [products, customFolders, folder]
+  );
+
+  const categoryOptions = useMemo(
+    () =>
+      buildCatalogOptions(
+        products.map((p) => p.category),
+        DEFAULT_PRODUCT_CATEGORIES,
+        ...customCategories,
+        category
+      ),
+    [products, customCategories, category]
   );
 
   useEffect(() => {
@@ -355,49 +376,37 @@ export function ProductFormModal({ open, onClose, initialProduct }: ProductFormM
           <h3 className="text-xs font-semibold uppercase tracking-wide text-[#19283E]">
             2. Classification & Propriétés personnalisées
           </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div>
-              <label htmlFor="prod-folder" className="block text-xs font-medium text-slate-700 mb-1">
-                Dossier de classement
-              </label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <CatalogSelectWithAdd
+              id="prod-folder"
+              label="Dossier de classement"
+              value={folder}
+              onChange={setFolder}
+              options={folderOptions}
+              onAddCustomOption={(next) => setCustomFolders((prev) => [...prev, next])}
+              addOptionLabel="+ Ajouter un dossier..."
+              addPlaceholder="Nom du nouveau dossier..."
+            />
+            <CatalogSelectWithAdd
+              id="prod-category"
+              label="Catégorie"
+              value={category}
+              onChange={setCategory}
+              options={categoryOptions}
+              onAddCustomOption={(next) => setCustomCategories((prev) => [...prev, next])}
+              addOptionLabel="+ Ajouter une catégorie..."
+              addPlaceholder="Nom de la nouvelle catégorie..."
+            />
+          </div>
+          <div>
+            <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer">
               <input
-                id="prod-folder"
-                type="text"
-                list="arena-product-folders"
-                value={folder}
-                onChange={(e) => setFolder(e.target.value)}
-                placeholder="Ex : Hébergement & Bureaux"
-                className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
+                type="checkbox"
+                checked={active}
+                onChange={(e) => setActive(e.target.checked)}
               />
-              <datalist id="arena-product-folders">
-                {existingFolders.map((f) => (
-                  <option key={f} value={f} />
-                ))}
-              </datalist>
-            </div>
-            <div>
-              <label htmlFor="prod-category" className="block text-xs font-medium text-slate-700 mb-1">
-                Catégorie
-              </label>
-              <input
-                id="prod-category"
-                type="text"
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                placeholder="Services, Conseil, Artisanat..."
-                className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
-              />
-            </div>
-            <div className="flex items-end pb-1">
-              <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={active}
-                  onChange={(e) => setActive(e.target.checked)}
-                />
-                Produit actif au catalogue
-              </label>
-            </div>
+              Produit actif au catalogue
+            </label>
           </div>
 
           <div>
