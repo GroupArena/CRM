@@ -24,6 +24,7 @@ import {
   UserPlus,
   Check,
   X,
+  FolderTree,
 } from 'lucide-react';
 import { useCrm } from '../context/CrmContext';
 import { useAuth } from '../hooks/useAuth';
@@ -39,9 +40,7 @@ import {
 } from '../types';
 import { formatCurrency } from '../utils/crmLogic';
 import {
-  buildCatalogOptions,
-  DEFAULT_PRODUCT_CATEGORIES,
-  DEFAULT_PRODUCT_FOLDERS,
+  dedupeCatalogValues,
   validateProductInput,
 } from '../utils/billingLogic';
 import {
@@ -73,6 +72,8 @@ export function SettingsPage() {
     stages,
     tags,
     products,
+    productFolderOptions,
+    productCategoryOptions,
     legalSettings,
     integrations,
     settings,
@@ -87,6 +88,12 @@ export function SettingsPage() {
     saveLegalSetting,
     saveIntegration,
     saveSettings,
+    addCatalogFolder,
+    renameCatalogFolder,
+    deleteCatalogFolder,
+    addCatalogCategory,
+    renameCatalogCategory,
+    deleteCatalogCategory,
     seedFirestore,
     addToast,
   } = useCrm();
@@ -155,27 +162,39 @@ export function SettingsPage() {
   const [customFolders, setCustomFolders] = useState<string[]>([]);
   const [customCategories, setCustomCategories] = useState<string[]>([]);
 
+  // Gestion autonome des dossiers & catégories (Super Admin)
+  const [newFolderInput, setNewFolderInput] = useState('');
+  const [editingFolderName, setEditingFolderName] = useState<string | null>(null);
+  const [editingFolderDraft, setEditingFolderDraft] = useState('');
+  const [confirmDeleteFolder, setConfirmDeleteFolder] = useState<string | null>(null);
+  const [newCategoryInput, setNewCategoryInput] = useState('');
+  const [editingCategoryName, setEditingCategoryName] = useState<string | null>(null);
+  const [editingCategoryDraft, setEditingCategoryDraft] = useState('');
+  const [confirmDeleteCategory, setConfirmDeleteCategory] = useState<string | null>(null);
+  const [savingCatalogMeta, setSavingCatalogMeta] = useState(false);
+  const [catalogMetaError, setCatalogMetaError] = useState<string | null>(null);
+
   const catalogFolderOptions = useMemo(
-    () =>
-      buildCatalogOptions(
-        products.map((p) => p.folder),
-        DEFAULT_PRODUCT_FOLDERS,
-        ...customFolders,
-        prodFolder
-      ),
-    [products, customFolders, prodFolder]
+    () => dedupeCatalogValues([...productFolderOptions, ...customFolders]),
+    [productFolderOptions, customFolders]
   );
 
   const catalogCategoryOptions = useMemo(
-    () =>
-      buildCatalogOptions(
-        products.map((p) => p.category),
-        DEFAULT_PRODUCT_CATEGORIES,
-        ...customCategories,
-        prodCategory
-      ),
-    [products, customCategories, prodCategory]
+    () => dedupeCatalogValues([...productCategoryOptions, ...customCategories]),
+    [productCategoryOptions, customCategories]
   );
+
+  useEffect(() => {
+    if (catalogFolderOptions.length > 0 && !catalogFolderOptions.includes(prodFolder)) {
+      setProdFolder(catalogFolderOptions[0]);
+    }
+  }, [catalogFolderOptions, prodFolder]);
+
+  useEffect(() => {
+    if (catalogCategoryOptions.length > 0 && !catalogCategoryOptions.includes(prodCategory)) {
+      setProdCategory(catalogCategoryOptions[0]);
+    }
+  }, [catalogCategoryOptions, prodCategory]);
 
   // Mentions légales édition locale
   const [legalDrafts, setLegalDrafts] = useState<Record<string, LegalSetting>>({});
@@ -963,7 +982,10 @@ export function SettingsPage() {
                   value={prodFolder}
                   onChange={setProdFolder}
                   options={catalogFolderOptions}
-                  onAddCustomOption={(next) => setCustomFolders((prev) => [...prev, next])}
+                  onAddCustomOption={(next) => {
+                    setCustomFolders((prev) => [...prev, next]);
+                    void addCatalogFolder(next);
+                  }}
                   addOptionLabel="+ Ajouter un dossier..."
                   addPlaceholder="Nouveau dossier..."
                   className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
@@ -994,7 +1016,10 @@ export function SettingsPage() {
                   value={prodCategory}
                   onChange={setProdCategory}
                   options={catalogCategoryOptions}
-                  onAddCustomOption={(next) => setCustomCategories((prev) => [...prev, next])}
+                  onAddCustomOption={(next) => {
+                    setCustomCategories((prev) => [...prev, next]);
+                    void addCatalogCategory(next);
+                  }}
                   addOptionLabel="+ Ajouter une catégorie..."
                   addPlaceholder="Nouvelle catégorie..."
                   className="w-full h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
@@ -1037,6 +1062,430 @@ export function SettingsPage() {
                 </button>
               </div>
             </form>
+          )}
+
+          {canEditSettings && (
+            <div className="rounded-xl border border-slate-200 bg-white p-5 space-y-4">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900 flex items-center gap-2">
+                  <FolderTree className="h-4 w-4 text-[#C9A125]" />
+                  Gestion autonome des dossiers de classement &amp; catégories
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Ajoutez, renommez ou supprimez vos dossiers et catégories directement ici. Le renommage met automatiquement à jour les fiches produits concernées.
+                </p>
+              </div>
+
+              {catalogMetaError && (
+                <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                  {catalogMetaError}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+                {/* Dossiers de classement */}
+                <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-sm font-semibold text-[#19283E]">
+                      Dossiers de classement ({productFolderOptions.length})
+                    </h4>
+                  </div>
+
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const clean = newFolderInput.trim();
+                      if (!clean) return;
+                      setSavingCatalogMeta(true);
+                      setCatalogMetaError(null);
+                      try {
+                        await addCatalogFolder(clean);
+                        setNewFolderInput('');
+                      } catch (err) {
+                        setCatalogMetaError(
+                          err instanceof Error ? err.message : "Impossible d'ajouter le dossier."
+                        );
+                      } finally {
+                        setSavingCatalogMeta(false);
+                      }
+                    }}
+                    className="flex items-center gap-2"
+                  >
+                    <input
+                      type="text"
+                      aria-label="Nom du nouveau dossier"
+                      value={newFolderInput}
+                      onChange={(e) => setNewFolderInput(e.target.value)}
+                      placeholder="Nouveau dossier de classement..."
+                      className="flex-1 min-w-0 h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
+                    />
+                    <button
+                      type="submit"
+                      disabled={savingCatalogMeta || !newFolderInput.trim()}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#19283E] px-3 text-xs font-medium text-white hover:bg-[#223552] disabled:opacity-50"
+                    >
+                      <Plus className="h-3.5 w-3.5 text-[#C9A125]" />
+                      Ajouter dossier
+                    </button>
+                  </form>
+
+                  <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+                    {productFolderOptions.length === 0 ? (
+                      <li className="px-3 py-4 text-xs text-slate-400 text-center">
+                        Aucun dossier configuré.
+                      </li>
+                    ) : (
+                      productFolderOptions.map((folderName) => {
+                        const usageCount = products.filter(
+                          (p) =>
+                            (p.folder || '').trim().toLocaleLowerCase('fr') ===
+                            folderName.trim().toLocaleLowerCase('fr')
+                        ).length;
+                        const isEditing = editingFolderName === folderName;
+                        const isConfirmingDelete = confirmDeleteFolder === folderName;
+                        return (
+                          <li
+                            key={folderName}
+                            className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+                          >
+                            {isEditing ? (
+                              <div className="flex flex-1 items-center gap-1.5">
+                                <input
+                                  type="text"
+                                  aria-label={`Nouveau nom pour le dossier ${folderName}`}
+                                  value={editingFolderDraft}
+                                  onChange={(e) => setEditingFolderDraft(e.target.value)}
+                                  onKeyDown={async (e) => {
+                                    if (e.key === 'Escape') {
+                                      setEditingFolderName(null);
+                                    }
+                                  }}
+                                  autoFocus
+                                  className="flex-1 min-w-0 h-8 rounded border border-blue-400 px-2.5 text-xs"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={savingCatalogMeta || !editingFolderDraft.trim()}
+                                  aria-label={`Valider le renommage du dossier ${folderName}`}
+                                  onClick={async () => {
+                                    const nextName = editingFolderDraft.trim();
+                                    if (!nextName) return;
+                                    setSavingCatalogMeta(true);
+                                    setCatalogMetaError(null);
+                                    try {
+                                      await renameCatalogFolder(folderName, nextName);
+                                      if (prodFolder === folderName) setProdFolder(nextName);
+                                      setEditingFolderName(null);
+                                    } catch (err) {
+                                      setCatalogMetaError(
+                                        err instanceof Error
+                                          ? err.message
+                                          : 'Impossible de renommer le dossier.'
+                                      );
+                                    } finally {
+                                      setSavingCatalogMeta(false);
+                                    }
+                                  }}
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded bg-[#19283E] text-white hover:bg-[#223552] disabled:opacity-40"
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label={`Annuler le renommage du dossier ${folderName}`}
+                                  onClick={() => setEditingFolderName(null)}
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-200 text-slate-600 hover:bg-slate-50"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="min-w-0 flex items-center gap-2">
+                                  <span className="font-medium text-slate-800 truncate">
+                                    {folderName}
+                                  </span>
+                                  <span className="text-[11px] font-sans tabular-nums text-slate-400 shrink-0">
+                                    ({usageCount})
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {isConfirmingDelete ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        disabled={savingCatalogMeta}
+                                        aria-label={`Confirmer suppression du dossier ${folderName}`}
+                                        onClick={async () => {
+                                          setSavingCatalogMeta(true);
+                                          setCatalogMetaError(null);
+                                          try {
+                                            await deleteCatalogFolder(folderName);
+                                            setConfirmDeleteFolder(null);
+                                          } catch (err) {
+                                            setCatalogMetaError(
+                                              err instanceof Error
+                                                ? err.message
+                                                : 'Impossible de supprimer le dossier.'
+                                            );
+                                          } finally {
+                                            setSavingCatalogMeta(false);
+                                          }
+                                        }}
+                                        className="h-7 rounded bg-red-600 px-2 text-[11px] font-semibold text-white hover:bg-red-700"
+                                      >
+                                        Supprimer
+                                      </button>
+                                      <button
+                                        type="button"
+                                        aria-label={`Annuler suppression du dossier ${folderName}`}
+                                        onClick={() => setConfirmDeleteFolder(null)}
+                                        className="h-7 rounded border border-slate-200 px-2 text-[11px] text-slate-600 hover:bg-slate-50"
+                                      >
+                                        Annuler
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        aria-label={`Renommer le dossier ${folderName}`}
+                                        title="Renommer"
+                                        onClick={() => {
+                                          setConfirmDeleteFolder(null);
+                                          setEditingFolderName(folderName);
+                                          setEditingFolderDraft(folderName);
+                                        }}
+                                        className="p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-[#19283E]"
+                                      >
+                                        <Edit2 className="h-3.5 w-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        aria-label={`Supprimer le dossier ${folderName}`}
+                                        title="Supprimer"
+                                        onClick={() => {
+                                          setEditingFolderName(null);
+                                          setConfirmDeleteFolder(folderName);
+                                        }}
+                                        className="p-1.5 rounded text-slate-500 hover:bg-red-50 hover:text-red-700"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </li>
+                        );
+                      })
+                    )}
+                  </ul>
+                </div>
+
+                {/* Catégories */}
+                <div className="rounded-lg border border-slate-200 bg-slate-50/60 p-4 space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-sm font-semibold text-[#19283E]">
+                      Catégories ({productCategoryOptions.length})
+                    </h4>
+                  </div>
+
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const clean = newCategoryInput.trim();
+                      if (!clean) return;
+                      setSavingCatalogMeta(true);
+                      setCatalogMetaError(null);
+                      try {
+                        await addCatalogCategory(clean);
+                        setNewCategoryInput('');
+                      } catch (err) {
+                        setCatalogMetaError(
+                          err instanceof Error ? err.message : "Impossible d'ajouter la catégorie."
+                        );
+                      } finally {
+                        setSavingCatalogMeta(false);
+                      }
+                    }}
+                    className="flex items-center gap-2"
+                  >
+                    <input
+                      type="text"
+                      aria-label="Nom de la nouvelle catégorie"
+                      value={newCategoryInput}
+                      onChange={(e) => setNewCategoryInput(e.target.value)}
+                      placeholder="Nouvelle catégorie..."
+                      className="flex-1 min-w-0 h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm"
+                    />
+                    <button
+                      type="submit"
+                      disabled={savingCatalogMeta || !newCategoryInput.trim()}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#19283E] px-3 text-xs font-medium text-white hover:bg-[#223552] disabled:opacity-50"
+                    >
+                      <Plus className="h-3.5 w-3.5 text-[#C9A125]" />
+                      Ajouter catégorie
+                    </button>
+                  </form>
+
+                  <ul className="divide-y divide-slate-200 rounded-lg border border-slate-200 bg-white">
+                    {productCategoryOptions.length === 0 ? (
+                      <li className="px-3 py-4 text-xs text-slate-400 text-center">
+                        Aucune catégorie configurée.
+                      </li>
+                    ) : (
+                      productCategoryOptions.map((catName) => {
+                        const usageCount = products.filter(
+                          (p) =>
+                            (p.category || '').trim().toLocaleLowerCase('fr') ===
+                            catName.trim().toLocaleLowerCase('fr')
+                        ).length;
+                        const isEditing = editingCategoryName === catName;
+                        const isConfirmingDelete = confirmDeleteCategory === catName;
+                        return (
+                          <li
+                            key={catName}
+                            className="flex items-center justify-between gap-2 px-3 py-2 text-sm"
+                          >
+                            {isEditing ? (
+                              <div className="flex flex-1 items-center gap-1.5">
+                                <input
+                                  type="text"
+                                  aria-label={`Nouveau nom pour la catégorie ${catName}`}
+                                  value={editingCategoryDraft}
+                                  onChange={(e) => setEditingCategoryDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Escape') {
+                                      setEditingCategoryName(null);
+                                    }
+                                  }}
+                                  autoFocus
+                                  className="flex-1 min-w-0 h-8 rounded border border-blue-400 px-2.5 text-xs"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={savingCatalogMeta || !editingCategoryDraft.trim()}
+                                  aria-label={`Valider le renommage de la catégorie ${catName}`}
+                                  onClick={async () => {
+                                    const nextName = editingCategoryDraft.trim();
+                                    if (!nextName) return;
+                                    setSavingCatalogMeta(true);
+                                    setCatalogMetaError(null);
+                                    try {
+                                      await renameCatalogCategory(catName, nextName);
+                                      if (prodCategory === catName) setProdCategory(nextName);
+                                      setEditingCategoryName(null);
+                                    } catch (err) {
+                                      setCatalogMetaError(
+                                        err instanceof Error
+                                          ? err.message
+                                          : 'Impossible de renommer la catégorie.'
+                                      );
+                                    } finally {
+                                      setSavingCatalogMeta(false);
+                                    }
+                                  }}
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded bg-[#19283E] text-white hover:bg-[#223552] disabled:opacity-40"
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  aria-label={`Annuler le renommage de la catégorie ${catName}`}
+                                  onClick={() => setEditingCategoryName(null)}
+                                  className="inline-flex h-8 w-8 items-center justify-center rounded border border-slate-200 text-slate-600 hover:bg-slate-50"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="min-w-0 flex items-center gap-2">
+                                  <span className="font-medium text-slate-800 truncate">
+                                    {catName}
+                                  </span>
+                                  <span className="text-[11px] font-sans tabular-nums text-slate-400 shrink-0">
+                                    ({usageCount})
+                                  </span>
+                                </div>
+                                <div className="flex items-center gap-1 shrink-0">
+                                  {isConfirmingDelete ? (
+                                    <>
+                                      <button
+                                        type="button"
+                                        disabled={savingCatalogMeta}
+                                        aria-label={`Confirmer suppression de la catégorie ${catName}`}
+                                        onClick={async () => {
+                                          setSavingCatalogMeta(true);
+                                          setCatalogMetaError(null);
+                                          try {
+                                            await deleteCatalogCategory(catName);
+                                            setConfirmDeleteCategory(null);
+                                          } catch (err) {
+                                            setCatalogMetaError(
+                                              err instanceof Error
+                                                ? err.message
+                                                : 'Impossible de supprimer la catégorie.'
+                                            );
+                                          } finally {
+                                            setSavingCatalogMeta(false);
+                                          }
+                                        }}
+                                        className="h-7 rounded bg-red-600 px-2 text-[11px] font-semibold text-white hover:bg-red-700"
+                                      >
+                                        Supprimer
+                                      </button>
+                                      <button
+                                        type="button"
+                                        aria-label={`Annuler suppression de la catégorie ${catName}`}
+                                        onClick={() => setConfirmDeleteCategory(null)}
+                                        className="h-7 rounded border border-slate-200 px-2 text-[11px] text-slate-600 hover:bg-slate-50"
+                                      >
+                                        Annuler
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        aria-label={`Renommer la catégorie ${catName}`}
+                                        title="Renommer"
+                                        onClick={() => {
+                                          setConfirmDeleteCategory(null);
+                                          setEditingCategoryName(catName);
+                                          setEditingCategoryDraft(catName);
+                                        }}
+                                        className="p-1.5 rounded text-slate-500 hover:bg-slate-100 hover:text-[#19283E]"
+                                      >
+                                        <Edit2 className="h-3.5 w-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        aria-label={`Supprimer la catégorie ${catName}`}
+                                        title="Supprimer"
+                                        onClick={() => {
+                                          setEditingCategoryName(null);
+                                          setConfirmDeleteCategory(catName);
+                                        }}
+                                        className="p-1.5 rounded text-slate-500 hover:bg-red-50 hover:text-red-700"
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </li>
+                        );
+                      })
+                    )}
+                  </ul>
+                </div>
+              </div>
+            </div>
           )}
         </div>
       )}

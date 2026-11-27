@@ -1287,3 +1287,121 @@ export function buildCatalogOptions(
   return Array.from(seen.values()).sort((a, b) => a.localeCompare(b, 'fr'));
 }
 
+export function dedupeCatalogValues(values: Array<string | undefined | null>): string[] {
+  const seen = new Map<string, string>();
+  for (const raw of values) {
+    const trimmed = (raw ?? '').trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLocaleLowerCase('fr');
+    if (!seen.has(key)) {
+      seen.set(key, trimmed);
+    }
+  }
+  return Array.from(seen.values()).sort((a, b) => a.localeCompare(b, 'fr'));
+}
+
+export function getManagedCatalogList(
+  configuredList: string[] | undefined,
+  defaults: readonly string[],
+  existingProductValues: Array<string | undefined | null>
+): string[] {
+  if (configuredList !== undefined) {
+    return dedupeCatalogValues(configuredList);
+  }
+  return buildCatalogOptions(existingProductValues, defaults);
+}
+
+export function resolveManagedCatalogOptions(
+  configuredList: string[] | undefined,
+  defaults: readonly string[],
+  existingProductValues: Array<string | undefined | null>,
+  ...extraValues: Array<string | undefined | null>
+): string[] {
+  const base = getManagedCatalogList(configuredList, defaults, existingProductValues);
+  return dedupeCatalogValues([...base, ...extraValues]);
+}
+
+export function addManagedCatalogValue(currentList: string[], rawValue: string): string[] {
+  const trimmed = rawValue.trim();
+  if (!trimmed) return dedupeCatalogValues(currentList);
+  return dedupeCatalogValues([...currentList, trimmed]);
+}
+
+export function renameManagedCatalogValue(
+  currentList: string[],
+  oldValue: string,
+  newValue: string
+): string[] {
+  const oldKey = oldValue.trim().toLocaleLowerCase('fr');
+  const cleanNew = newValue.trim();
+  if (!cleanNew) return dedupeCatalogValues(currentList);
+  const replaced = currentList.map((item) =>
+    item.trim().toLocaleLowerCase('fr') === oldKey ? cleanNew : item
+  );
+  if (!replaced.some((item) => item.trim().toLocaleLowerCase('fr') === cleanNew.toLocaleLowerCase('fr'))) {
+    replaced.push(cleanNew);
+  }
+  return dedupeCatalogValues(replaced);
+}
+
+export function removeManagedCatalogValue(currentList: string[], valueToRemove: string): string[] {
+  const targetKey = valueToRemove.trim().toLocaleLowerCase('fr');
+  return dedupeCatalogValues(
+    currentList.filter((item) => item.trim().toLocaleLowerCase('fr') !== targetKey)
+  );
+}
+
+export interface FormattedDescriptionLine {
+  kind: 'blank' | 'bullet' | 'text';
+  raw: string;
+  bullet?: string;
+  content: string;
+  indentLevel: number;
+}
+
+export function parseFormattedDescriptionLines(
+  description?: string | null
+): FormattedDescriptionLine[] {
+  if (!description || !description.trim()) return [];
+  const normalized = description.replace(/\r\n?/g, '\n');
+  const rawLines = normalized.split('\n');
+
+  // Trim leading/trailing completely empty lines while keeping internal blank lines
+  let start = 0;
+  let end = rawLines.length - 1;
+  while (start <= end && rawLines[start].trim() === '') start += 1;
+  while (end >= start && rawLines[end].trim() === '') end -= 1;
+
+  const result: FormattedDescriptionLine[] = [];
+  for (let i = start; i <= end; i += 1) {
+    const raw = rawLines[i];
+    if (raw.trim() === '') {
+      result.push({ kind: 'blank', raw, content: '', indentLevel: 0 });
+      continue;
+    }
+    const leadingSpacesMatch = raw.match(/^(\s*)/);
+    const leadingLen = leadingSpacesMatch ? leadingSpacesMatch[1].length : 0;
+    const indentLevel = leadingLen >= 2 ? 1 : 0;
+    const trimmedStart = raw.trimStart();
+    const bulletMatch = trimmedStart.match(/^([-•*])\s+(.+)$/);
+    if (bulletMatch) {
+      result.push({
+        kind: 'bullet',
+        raw,
+        bullet: bulletMatch[1],
+        content: bulletMatch[2].trimEnd(),
+        indentLevel,
+      });
+    } else {
+      result.push({
+        kind: 'text',
+        raw,
+        content: trimmedStart.trimEnd(),
+        indentLevel,
+      });
+    }
+  }
+  return result;
+}
+
+

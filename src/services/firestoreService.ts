@@ -857,13 +857,62 @@ export async function saveSettingsDoc(settings: CrmSettings): Promise<void> {
   if (!db) throw new Error('Firestore non initialisé.');
   const ref = doc(db, 'settings', settings.id);
   const { updatedAt: _u, ...rest } = settings;
+  const clean: Record<string, unknown> = { ...rest };
+  for (const k of Object.keys(clean)) {
+    if (clean[k] === undefined) delete clean[k];
+  }
   try {
     await setDoc(ref, {
-      ...rest,
+      ...clean,
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `settings/${settings.id}`);
+  }
+}
+
+export async function renameProductCatalogFieldDoc(params: {
+  field: 'folder' | 'category';
+  newValue: string;
+  productIds: string[];
+  settings: CrmSettings;
+}): Promise<void> {
+  if (!db) throw new Error('Firestore non initialisé.');
+  const database = db;
+  const { updatedAt: _u, ...restSettings } = params.settings;
+  const cleanSettings: Record<string, unknown> = { ...restSettings };
+  for (const k of Object.keys(cleanSettings)) {
+    if (cleanSettings[k] === undefined) delete cleanSettings[k];
+  }
+
+  try {
+    const ops: Array<(batch: ReturnType<typeof writeBatch>) => void> = [];
+    ops.push((batch) => {
+      batch.set(doc(database, 'settings', params.settings.id), {
+        ...cleanSettings,
+        updatedAt: serverTimestamp(),
+      });
+    });
+
+    for (const productId of params.productIds) {
+      ops.push((batch) => {
+        batch.update(doc(database, 'products', productId), {
+          [params.field]: params.newValue,
+          updatedAt: serverTimestamp(),
+        });
+      });
+    }
+
+    const CHUNK_SIZE = 400;
+    for (let i = 0; i < ops.length; i += CHUNK_SIZE) {
+      const batch = writeBatch(database);
+      for (const applyOp of ops.slice(i, i + CHUNK_SIZE)) {
+        applyOp(batch);
+      }
+      await batch.commit();
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `settings/${params.settings.id}`);
   }
 }
 

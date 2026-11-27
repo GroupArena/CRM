@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Package, Plus, Trash2 } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { useCrm } from '../../context/CrmContext';
+import { useAuth } from '../../hooks/useAuth';
 import {
   PRODUCT_BILLING_DURATION_UNIT_LABELS,
   PRODUCT_BILLING_FREQUENCY_LABELS,
@@ -15,14 +16,12 @@ import {
   type ProductPricingType,
 } from '../../types';
 import {
-  buildCatalogOptions,
   computeProductMargin,
-  DEFAULT_PRODUCT_CATEGORIES,
-  DEFAULT_PRODUCT_FOLDERS,
+  dedupeCatalogValues,
   isSkuUnique,
   validateProductInput,
 } from '../../utils/billingLogic';
-import { formatCurrency } from '../../utils/crmLogic';
+import { formatCurrency, PRODUCT_ACCESS_DENIED_MESSAGE } from '../../utils/crmLogic';
 import { CatalogSelectWithAdd } from './CatalogSelectWithAdd';
 
 interface ProductFormModalProps {
@@ -32,7 +31,17 @@ interface ProductFormModalProps {
 }
 
 export function ProductFormModal({ open, onClose, initialProduct }: ProductFormModalProps) {
-  const { entities, products, settings, saveProduct } = useCrm();
+  const {
+    entities,
+    products,
+    settings,
+    productFolderOptions,
+    productCategoryOptions,
+    addCatalogFolder,
+    addCatalogCategory,
+    saveProduct,
+  } = useCrm();
+  const { canCreateProduct, canEditProduct, canManageSettings } = useAuth();
 
   const [name, setName] = useState('');
   const [sku, setSku] = useState('');
@@ -67,25 +76,13 @@ export function ProductFormModal({ open, onClose, initialProduct }: ProductFormM
   const [customCategories, setCustomCategories] = useState<string[]>([]);
 
   const folderOptions = useMemo(
-    () =>
-      buildCatalogOptions(
-        products.map((p) => p.folder),
-        DEFAULT_PRODUCT_FOLDERS,
-        ...customFolders,
-        folder
-      ),
-    [products, customFolders, folder]
+    () => dedupeCatalogValues([...productFolderOptions, ...customFolders, folder]),
+    [productFolderOptions, customFolders, folder]
   );
 
   const categoryOptions = useMemo(
-    () =>
-      buildCatalogOptions(
-        products.map((p) => p.category),
-        DEFAULT_PRODUCT_CATEGORIES,
-        ...customCategories,
-        category
-      ),
-    [products, customCategories, category]
+    () => dedupeCatalogValues([...productCategoryOptions, ...customCategories, category]),
+    [productCategoryOptions, customCategories, category]
   );
 
   useEffect(() => {
@@ -97,8 +94,8 @@ export function ProductFormModal({ open, onClose, initialProduct }: ProductFormM
       setName(initialProduct.name);
       setSku(initialProduct.sku || '');
       setDescription(initialProduct.description || '');
-      setFolder(initialProduct.folder || 'Catalogue général');
-      setCategory(initialProduct.category || 'Services');
+      setFolder(initialProduct.folder || productFolderOptions[0] || 'Catalogue général');
+      setCategory(initialProduct.category || productCategoryOptions[0] || 'Services');
       setEntityIds(initialProduct.entityIds || []);
       setActive(initialProduct.active);
       setCustomProperties(
@@ -126,8 +123,16 @@ export function ProductFormModal({ open, onClose, initialProduct }: ProductFormM
       setName('');
       setSku('');
       setDescription('');
-      setFolder('Catalogue général');
-      setCategory('Services');
+      setFolder(
+        productFolderOptions.includes('Catalogue général')
+          ? 'Catalogue général'
+          : productFolderOptions[0] || 'Catalogue général'
+      );
+      setCategory(
+        productCategoryOptions.includes('Services')
+          ? 'Services'
+          : productCategoryOptions[0] || 'Services'
+      );
       setEntityIds([]);
       setActive(true);
       setCustomProperties([]);
@@ -149,7 +154,7 @@ export function ProductFormModal({ open, onClose, initialProduct }: ProductFormM
       setImageUrl('');
       setProductUrl('');
     }
-  }, [open, initialProduct, settings.defaultCurrency]);
+  }, [open, initialProduct, settings.defaultCurrency, productFolderOptions, productCategoryOptions]);
 
   const numPrice = Math.max(0, Number(price) || 0);
   const numUnitCost = Math.max(0, Number(unitCost) || 0);
@@ -211,6 +216,14 @@ export function ProductFormModal({ open, onClose, initialProduct }: ProductFormM
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (initialProduct && !canEditProduct) {
+      setErrorMsg(PRODUCT_ACCESS_DENIED_MESSAGE);
+      return;
+    }
+    if (!initialProduct && !canCreateProduct) {
+      setErrorMsg(PRODUCT_ACCESS_DENIED_MESSAGE);
+      return;
+    }
     const cleanedProperties = customProperties
       .map((cp) => ({ key: cp.key.trim(), value: cp.value.trim() }))
       .filter((cp) => cp.key.length > 0 || cp.value.length > 0);
@@ -362,10 +375,10 @@ export function ProductFormModal({ open, onClose, initialProduct }: ProductFormM
             </label>
             <textarea
               id="prod-desc"
-              rows={2}
+              rows={3}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Périmètre de la prestation, livrables, caractéristiques techniques..."
+              placeholder="Périmètre, livrables... (les retours à la ligne et tirets « - » sont conservés sur devis et factures)"
               className="w-full rounded-lg border border-slate-200 bg-white p-2.5 text-sm"
             />
           </div>
@@ -383,7 +396,12 @@ export function ProductFormModal({ open, onClose, initialProduct }: ProductFormM
               value={folder}
               onChange={setFolder}
               options={folderOptions}
-              onAddCustomOption={(next) => setCustomFolders((prev) => [...prev, next])}
+              onAddCustomOption={(next) => {
+                setCustomFolders((prev) => [...prev, next]);
+                if (canManageSettings) {
+                  void addCatalogFolder(next);
+                }
+              }}
               addOptionLabel="+ Ajouter un dossier..."
               addPlaceholder="Nom du nouveau dossier..."
             />
@@ -393,7 +411,12 @@ export function ProductFormModal({ open, onClose, initialProduct }: ProductFormM
               value={category}
               onChange={setCategory}
               options={categoryOptions}
-              onAddCustomOption={(next) => setCustomCategories((prev) => [...prev, next])}
+              onAddCustomOption={(next) => {
+                setCustomCategories((prev) => [...prev, next]);
+                if (canManageSettings) {
+                  void addCatalogCategory(next);
+                }
+              }}
               addOptionLabel="+ Ajouter une catégorie..."
               addPlaceholder="Nom de la nouvelle catégorie..."
             />

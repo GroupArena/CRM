@@ -1,7 +1,9 @@
 import { useCrm } from '../context/CrmContext';
 import {
+  canCreateProductRecord,
   canDeleteProductRecord,
   canDeleteProspect,
+  canEditProductRecord,
   canEditProspect,
   canManageEntities,
   canManageSettings,
@@ -52,6 +54,8 @@ export function useAuth() {
     canManageSettings: canManageSettings(currentUser),
     canManageUsers: canManageUsers(currentUser),
     canManageEntities: canManageEntities(currentUser),
+    canCreateProduct: canCreateProductRecord(currentUser),
+    canEditProduct: canEditProductRecord(currentUser),
     canDeleteProduct: canDeleteProductRecord(currentUser),
     canEditProspect: (p: Prospect) => canEditProspect(currentUser, p),
     canDeleteProspect: (p: Prospect) => canDeleteProspect(currentUser, p),

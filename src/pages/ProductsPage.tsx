@@ -22,7 +22,7 @@ import {
   type ProductPricingType,
 } from '../types';
 import { computeProductMargin } from '../utils/billingLogic';
-import { formatCurrency } from '../utils/crmLogic';
+import { formatCurrency, PRODUCT_ACCESS_DENIED_MESSAGE } from '../utils/crmLogic';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Modal } from '../components/ui/Modal';
 import { ProductFormModal } from '../components/crm/ProductFormModal';
@@ -43,8 +43,8 @@ function formatBillingBadge(product: Product): string {
 }
 
 export function ProductsPage() {
-  const { products, authorizedEntities, entities, globalSearch, settings, deleteProduct } = useCrm();
-  const { canWriteCrm, canDeleteProduct } = useAuth();
+  const { products, authorizedEntities, entities, globalSearch, settings, deleteProduct, addToast } = useCrm();
+  const { canWriteCrm, canCreateProduct, canEditProduct, canDeleteProduct } = useAuth();
 
   const [entityFilter, setEntityFilter] = useState('all');
   const [folderFilter, setFolderFilter] = useState('all');
@@ -55,7 +55,17 @@ export function ProductsPage() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [confirmDeleteProduct, setConfirmDeleteProduct] = useState<Product | null>(null);
   const [deletingProduct, setDeletingProduct] = useState(false);
+  const [accessError, setAccessError] = useState<string | null>(null);
   const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
+
+  const triggerAccessDenied = () => {
+    setAccessError(PRODUCT_ACCESS_DENIED_MESSAGE);
+    addToast({
+      type: 'error',
+      title: 'Accès refusé',
+      description: PRODUCT_ACCESS_DENIED_MESSAGE,
+    });
+  };
 
   const folders = useMemo(
     () =>
@@ -119,10 +129,11 @@ export function ProductsPage() {
           </p>
         </div>
 
-        {canWriteCrm && (
+        {canCreateProduct && (
           <button
             type="button"
             onClick={() => {
+              setAccessError(null);
               setEditingProduct(null);
               setModalOpen(true);
             }}
@@ -133,6 +144,22 @@ export function ProductsPage() {
           </button>
         )}
       </div>
+
+      {accessError && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800"
+        >
+          <span>{accessError}</span>
+          <button
+            type="button"
+            onClick={() => setAccessError(null)}
+            className="text-xs font-semibold text-red-700 hover:underline"
+          >
+            Fermer
+          </button>
+        </div>
+      )}
 
       {/* KPIs catalogue */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -377,23 +404,43 @@ export function ProductsPage() {
                             <button
                               type="button"
                               onClick={() => {
+                                if (!canEditProduct) {
+                                  triggerAccessDenied();
+                                  return;
+                                }
+                                setAccessError(null);
                                 setEditingProduct(p);
                                 setModalOpen(true);
                               }}
                               aria-label={`Modifier ${p.name}`}
-                              title="Modifier"
-                              className="p-1.5 rounded text-slate-500 hover:bg-slate-100"
+                              title={canEditProduct ? 'Modifier' : PRODUCT_ACCESS_DENIED_MESSAGE}
+                              className={`p-1.5 rounded ${
+                                canEditProduct
+                                  ? 'text-slate-500 hover:bg-slate-100'
+                                  : 'text-slate-400 hover:bg-red-50 hover:text-red-700'
+                              }`}
                             >
                               <Edit2 className="h-4 w-4" />
                             </button>
                           )}
-                          {canDeleteProduct && (
+                          {canWriteCrm && (
                             <button
                               type="button"
-                              onClick={() => setConfirmDeleteProduct(p)}
+                              onClick={() => {
+                                if (!canDeleteProduct) {
+                                  triggerAccessDenied();
+                                  return;
+                                }
+                                setAccessError(null);
+                                setConfirmDeleteProduct(p);
+                              }}
                               aria-label={`Supprimer ${p.name}`}
-                              title="Supprimer"
-                              className="p-1.5 rounded text-slate-500 hover:bg-red-50 hover:text-red-700"
+                              title={canDeleteProduct ? 'Supprimer' : PRODUCT_ACCESS_DENIED_MESSAGE}
+                              className={`p-1.5 rounded ${
+                                canDeleteProduct
+                                  ? 'text-slate-500 hover:bg-red-50 hover:text-red-700'
+                                  : 'text-slate-400 hover:bg-red-50 hover:text-red-700'
+                              }`}
                             >
                               <Trash2 className="h-4 w-4" />
                             </button>
@@ -449,6 +496,11 @@ export function ProductsPage() {
                 setDeletingProduct(true);
                 try {
                   await deleteProduct(confirmDeleteProduct.id);
+                  setConfirmDeleteProduct(null);
+                } catch (err) {
+                  setAccessError(
+                    err instanceof Error ? err.message : PRODUCT_ACCESS_DENIED_MESSAGE
+                  );
                   setConfirmDeleteProduct(null);
                 } finally {
                   setDeletingProduct(false);

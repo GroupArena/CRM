@@ -23,6 +23,7 @@ import {
   getClientFiscalInfo,
   getDocumentAmountInWordsPrefix,
   getInvoiceTotalsDisplaySpec,
+  parseFormattedDescriptionLines,
   shouldRenderStampAndSignature,
 } from './billingLogic';
 import { formatInvoiceAmountInWords } from './numberToWordsFr';
@@ -454,18 +455,51 @@ export async function buildArenaA4Pdf(
     doc.text(formatNumberSpacing(item.unitPrice), 142, tableY, { align: 'center' });
     doc.text(formatNumberSpacing(item.lineTotal), 179, tableY, { align: 'center' });
 
-    let rowAdvance = descLines.length * 4.5;
+    let descY = tableY + descLines.length * 4.5 + 0.5;
     if (item.description) {
-      const subLines = doc.splitTextToSize(item.description, 76);
-      doc.setFontSize(7.5);
-      doc.setTextColor(100, 116, 139);
-      doc.text(subLines, 43, tableY + rowAdvance + 0.5);
-      rowAdvance += subLines.length * 3.8 + 1;
-      doc.setFontSize(8.5);
-      doc.setTextColor(17, 24, 39);
+      const formattedLines = parseFormattedDescriptionLines(item.description);
+      if (formattedLines.length > 0) {
+        doc.setFontSize(7.5);
+        doc.setTextColor(100, 116, 139);
+        for (const fLine of formattedLines) {
+          if (descY > 272) {
+            doc.addPage();
+            tableY = 20;
+            descY = 20;
+            doc.setFontSize(7.5);
+            doc.setTextColor(100, 116, 139);
+          }
+          if (fLine.kind === 'blank') {
+            descY += 2.2;
+            continue;
+          }
+          const indentX = 43 + (fLine.indentLevel > 0 ? 3 : 0);
+          const availableWidth = Math.max(20, 76 - (indentX - 43));
+          if (fLine.kind === 'bullet') {
+            const bulletGlyph = fLine.bullet || '-';
+            const markerWidth = Math.max(2.6, doc.getTextWidth(`${bulletGlyph} `));
+            const wrapped = doc.splitTextToSize(
+              fLine.content,
+              Math.max(18, availableWidth - markerWidth)
+            );
+            doc.text(bulletGlyph, indentX, descY);
+            if (wrapped.length > 0) {
+              doc.text(wrapped, indentX + markerWidth, descY);
+            }
+            descY += Math.max(1, wrapped.length) * 3.6;
+          } else {
+            const wrapped = doc.splitTextToSize(fLine.content, availableWidth);
+            doc.text(wrapped, indentX, descY);
+            descY += Math.max(1, wrapped.length) * 3.6;
+          }
+        }
+        doc.setFontSize(8.5);
+        doc.setTextColor(17, 24, 39);
+        descY += 1;
+      }
     }
 
-    tableY += Math.max(10, rowAdvance + 5);
+    tableY = Math.max(tableY + 10, descY + 4);
   }
 
   // Bottom border under items

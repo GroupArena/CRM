@@ -24,7 +24,11 @@ import {
   computeProductMargin,
   resolveProductUnitPrice,
 } from '../utils/billingLogic';
-import { formatCurrency, formatDateFr } from '../utils/crmLogic';
+import {
+  formatCurrency,
+  formatDateFr,
+  PRODUCT_ACCESS_DENIED_MESSAGE,
+} from '../utils/crmLogic';
 import { ProductFormModal } from '../components/crm/ProductFormModal';
 import { EmptyState } from '../components/ui/EmptyState';
 
@@ -38,8 +42,9 @@ export function ProductDetailPage() {
     invoiceItems,
     deals,
     deleteProduct,
+    addToast,
   } = useCrm();
-  const { canWriteCrm, canDeleteProduct } = useAuth();
+  const { canWriteCrm, canEditProduct, canDeleteProduct } = useAuth();
 
   const product = products.find((p) => p.id === id);
 
@@ -47,6 +52,16 @@ export function ProductDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [simQty, setSimQty] = useState(1);
   const [imgError, setImgError] = useState(false);
+  const [accessError, setAccessError] = useState<string | null>(null);
+
+  const triggerAccessDenied = () => {
+    setAccessError(PRODUCT_ACCESS_DENIED_MESSAGE);
+    addToast({
+      type: 'error',
+      title: 'Accès refusé',
+      description: PRODUCT_ACCESS_DENIED_MESSAGE,
+    });
+  };
 
   const usageStats = useMemo(() => {
     if (!product) return { quotes: 0, invoices: 0, deals: 0 };
@@ -101,8 +116,13 @@ export function ProductDetailPage() {
       : 'Durée indéterminée (renouvellement tacite)';
 
   const handleDelete = async () => {
-    await deleteProduct(product.id);
-    navigate('/products');
+    try {
+      await deleteProduct(product.id);
+      navigate('/products');
+    } catch (err) {
+      setAccessError(err instanceof Error ? err.message : PRODUCT_ACCESS_DENIED_MESSAGE);
+      setConfirmDelete(false);
+    }
   };
 
   return (
@@ -132,17 +152,31 @@ export function ProductDetailPage() {
           {canWriteCrm && (
             <button
               type="button"
-              onClick={() => setEditOpen(true)}
+              onClick={() => {
+                if (!canEditProduct) {
+                  triggerAccessDenied();
+                  return;
+                }
+                setAccessError(null);
+                setEditOpen(true);
+              }}
               className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#19283E] px-4 text-sm font-medium text-white hover:bg-[#223552]"
             >
               <Edit2 className="h-4 w-4 text-[#C9A125]" />
               Modifier la fiche
             </button>
           )}
-          {canDeleteProduct && !confirmDelete && (
+          {canWriteCrm && !confirmDelete && (
             <button
               type="button"
-              onClick={() => setConfirmDelete(true)}
+              onClick={() => {
+                if (!canDeleteProduct) {
+                  triggerAccessDenied();
+                  return;
+                }
+                setAccessError(null);
+                setConfirmDelete(true);
+              }}
               className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 text-xs font-medium text-red-700 hover:bg-red-50"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -169,6 +203,22 @@ export function ProductDetailPage() {
           )}
         </div>
       </div>
+
+      {accessError && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-800"
+        >
+          <span>{accessError}</span>
+          <button
+            type="button"
+            onClick={() => setAccessError(null)}
+            className="text-xs font-semibold text-red-700 hover:underline"
+          >
+            Fermer
+          </button>
+        </div>
+      )}
 
       {/* En-tête fiche produit */}
       <div className="rounded-xl border border-[#E1E4EA] bg-white p-6">

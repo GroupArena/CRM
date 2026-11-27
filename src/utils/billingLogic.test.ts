@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  addManagedCatalogValue,
   buildBalanceLinesFromDepositItems,
   buildCatalogOptions,
   buildUnifiedClientHistory,
@@ -20,13 +21,18 @@ import {
   getDepositInvoicesForEntity,
   getDocumentAmountInWordsPrefix,
   getInvoiceTotalsDisplaySpec,
+  getManagedCatalogList,
   getNextSequenceNumber,
   getPaidDepositInvoicesForClient,
   isSkuUnique,
   mergeCompanyRecords,
   mergeContactRecords,
+  parseFormattedDescriptionLines,
   recalculateInvoiceWithPayments,
+  removeManagedCatalogValue,
+  renameManagedCatalogValue,
   resolveInvoiceStatus,
+  resolveManagedCatalogOptions,
   resolveProductUnitPrice,
   shouldRenderStampAndSignature,
   validateProductInput,
@@ -803,6 +809,70 @@ test('buildCatalogOptions deduplicates defaults, existing product values, and cu
     1
   );
 });
+
+test('Managed catalog folders & categories support autonomous add, rename, and permanent removal of defaults', () => {
+  // When unconfigured (undefined), falls back to defaults + existing product values
+  const initial = getManagedCatalogList(undefined, DEFAULT_PRODUCT_FOLDERS, ['Custom A']);
+  assert.ok(initial.includes('Catalogue général'));
+  assert.ok(initial.includes('Artisanat & Décoration'));
+  assert.ok(initial.includes('Custom A'));
+
+  // Remove a default folder -> once configured, it does NOT reappear from defaults
+  const afterRemove = removeManagedCatalogValue(initial, 'Artisanat & Décoration');
+  assert.equal(afterRemove.includes('Artisanat & Décoration'), false);
+  const resolvedAfterRemove = resolveManagedCatalogOptions(
+    afterRemove,
+    DEFAULT_PRODUCT_FOLDERS,
+    ['Artisanat & Décoration']
+  );
+  assert.equal(resolvedAfterRemove.includes('Artisanat & Décoration'), false);
+
+  // Add & rename cleanly with case-insensitive deduplication
+  const afterAdd = addManagedCatalogValue(afterRemove, 'Coworking VIP');
+  assert.ok(afterAdd.includes('Coworking VIP'));
+  const afterRename = renameManagedCatalogValue(afterAdd, 'Coworking VIP', 'Espaces Coworking');
+  assert.equal(afterRename.includes('Coworking VIP'), false);
+  assert.ok(afterRename.includes('Espaces Coworking'));
+});
+
+test('parseFormattedDescriptionLines preserves line breaks, dashes, indentation, and internal blank lines', () => {
+  assert.deepEqual(parseFormattedDescriptionLines(''), []);
+  assert.deepEqual(parseFormattedDescriptionLines('   \n  '), []);
+
+  const parsed = parseFormattedDescriptionLines(
+    'Prestation complète :\n- Domiciliation commerciale\n  - Notification WhatsApp\n\n• Accès salle de réunion'
+  );
+  assert.equal(parsed.length, 5);
+  assert.deepEqual(parsed[0], {
+    kind: 'text',
+    raw: 'Prestation complète :',
+    content: 'Prestation complète :',
+    indentLevel: 0,
+  });
+  assert.deepEqual(parsed[1], {
+    kind: 'bullet',
+    raw: '- Domiciliation commerciale',
+    bullet: '-',
+    content: 'Domiciliation commerciale',
+    indentLevel: 0,
+  });
+  assert.deepEqual(parsed[2], {
+    kind: 'bullet',
+    raw: '  - Notification WhatsApp',
+    bullet: '-',
+    content: 'Notification WhatsApp',
+    indentLevel: 1,
+  });
+  assert.equal(parsed[3].kind, 'blank');
+  assert.deepEqual(parsed[4], {
+    kind: 'bullet',
+    raw: '• Accès salle de réunion',
+    bullet: '•',
+    content: 'Accès salle de réunion',
+    indentLevel: 0,
+  });
+});
+
 
 
 

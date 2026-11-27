@@ -683,11 +683,16 @@ service cloud.firestore {
 
     function isValidSetting(data) {
       return data.keys().hasAll(['id', 'scope', 'defaultCurrency', 'defaultProspectView', 'updatedByUid', 'updatedAt'])
-        && data.keys().hasOnly(['id', 'scope', 'defaultCurrency', 'defaultProspectView', 'updatedByUid', 'updatedAt'])
+        && data.keys().hasOnly([
+          'id', 'scope', 'defaultCurrency', 'defaultProspectView',
+          'productFolders', 'productCategories', 'updatedByUid', 'updatedAt'
+        ])
         && isValidId(data.id)
         && isValidId(data.scope)
         && isValidString(data.defaultCurrency, 1, 10)
         && data.defaultProspectView in ['table', 'cards']
+        && (!('productFolders' in data) || isValidStringList(data.productFolders, 100))
+        && (!('productCategories' in data) || isValidStringList(data.productCategories, 100))
         && isValidId(data.updatedByUid)
         && data.updatedAt is timestamp;
     }
@@ -835,8 +840,9 @@ service cloud.firestore {
     match /products/{productId} {
       allow get: if isActiveUser() && isValidId(productId);
       allow list: if isActiveUser() && (resource.data.active == true || isSuperAdmin() || isManagerOrAbove());
-      allow create: if isManagerOrAbove() && isValidId(productId) && isValidProduct(incoming())
-        && incoming().id == productId && incoming().createdAt == request.time && incoming().updatedAt == request.time;
+      allow create: if canWriteCrmData() && isValidId(productId) && isValidProduct(incoming())
+        && incoming().id == productId && incoming().createdAt == request.time && incoming().updatedAt == request.time
+        && (isSuperAdmin() || !('entityIds' in incoming()) || incoming().entityIds.size() == 0 || incoming().entityIds.hasAny(userEntityIds()));
       allow update: if isManagerOrAbove() && isValidId(productId) && isValidProduct(incoming())
         && incoming().id == existing().id && incoming().createdAt == existing().createdAt && incoming().updatedAt == request.time;
       allow delete: if isManagerOrAbove() && isValidId(productId);

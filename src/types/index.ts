@@ -767,6 +767,8 @@ export interface CrmSettings {
   scope: string;
   defaultCurrency: string;
   defaultProspectView: 'table' | 'cards';
+  productFolders?: string[];
+  productCategories?: string[];
   updatedByUid: string;
   updatedAt: string;
 }

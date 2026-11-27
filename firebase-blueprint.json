@@ -630,6 +630,8 @@
         "scope": { "type": "string", "maxLength": 128 },
         "defaultCurrency": { "type": "string", "maxLength": 10 },
         "defaultProspectView": { "type": "string", "enum": ["table", "cards"] },
+        "productFolders": { "type": "array", "items": { "type": "string" } },
+        "productCategories": { "type": "array", "items": { "type": "string" } },
         "updatedByUid": { "type": "string", "maxLength": 128 },
         "updatedAt": { "type": "string", "format": "date-time" }
       },

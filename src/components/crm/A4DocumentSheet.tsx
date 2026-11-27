@@ -9,6 +9,7 @@ import {
   getClientFiscalInfo,
   getDocumentAmountInWordsPrefix,
   getInvoiceTotalsDisplaySpec,
+  parseFormattedDescriptionLines,
   shouldRenderStampAndSignature,
 } from '../../utils/billingLogic';
 import { formatCurrency, formatDateFr } from '../../utils/crmLogic';
@@ -303,13 +304,44 @@ export function A4DocumentSheet({
                           <td className="py-2.5 px-2 text-center font-sans tabular-nums text-slate-800 whitespace-nowrap">
                             {item.quantity}
                           </td>
-                          <td className="py-2.5 px-2.5 text-slate-900">
+                          <td className="py-2.5 px-2.5 text-slate-900 align-top">
                             <div className="font-medium">{item.label}</div>
-                            {item.description && (
-                              <div className="text-[11px] text-slate-500 mt-0.5">
-                                {item.description}
-                              </div>
-                            )}
+                            {item.description && (() => {
+                              const descLines = parseFormattedDescriptionLines(item.description);
+                              if (descLines.length === 0) return null;
+                              return (
+                                <div className="text-[11px] text-slate-500 mt-1 space-y-0.5">
+                                  {descLines.map((line, lineIdx) => {
+                                    if (line.kind === 'blank') {
+                                      return <div key={lineIdx} className="h-1.5" aria-hidden="true" />;
+                                    }
+                                    if (line.kind === 'bullet') {
+                                      return (
+                                        <div
+                                          key={lineIdx}
+                                          className={`flex items-start gap-1.5 leading-snug ${
+                                            line.indentLevel > 0 ? 'pl-3' : ''
+                                          }`}
+                                        >
+                                          <span className="shrink-0 select-none">{line.bullet}</span>
+                                          <span className="min-w-0 break-words">{line.content}</span>
+                                        </div>
+                                      );
+                                    }
+                                    return (
+                                      <div
+                                        key={lineIdx}
+                                        className={`leading-snug break-words ${
+                                          line.indentLevel > 0 ? 'pl-3' : ''
+                                        }`}
+                                      >
+                                        {line.content}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="py-2.5 px-2 text-right font-sans tabular-nums text-slate-800 whitespace-nowrap">
                             {formatSpacedNumber(item.unitPrice)}

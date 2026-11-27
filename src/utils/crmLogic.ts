@@ -233,6 +233,16 @@ export function canDeleteUserAccount(
   return isSuperAdminUser(actor) && Boolean(actor && target.uid !== actor.uid);
 }
 
+export const PRODUCT_ACCESS_DENIED_MESSAGE = "Vous n'avez pas les accès requis";
+
+export function canCreateProductRecord(user: UserProfile | null): boolean {
+  return canWriteCrm(user);
+}
+
+export function canEditProductRecord(user: UserProfile | null): boolean {
+  return canDeleteProductRecord(user);
+}
+
 export function canDeleteProductRecord(user: UserProfile | null): boolean {
   if (!user || !user.active) return false;
   return (

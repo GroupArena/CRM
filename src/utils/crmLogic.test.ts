@@ -1,14 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  canCreateProductRecord,
   canDeleteProductRecord,
   canDeleteProspect,
   canDeleteUserAccount,
+  canEditProductRecord,
   canEditProspect,
   canManageEntities,
   canManageSettings,
   canManageUsers,
   canViewAllEntities,
+  PRODUCT_ACCESS_DENIED_MESSAGE,
   computeDashboardKpis,
   filterProspectsByScope,
   formatCurrency,
@@ -534,3 +537,30 @@ test('AccountAccessDeniedError preserves explicit French message in formatFireba
   assert.equal(isAccountAccessDeniedError(suspendedErr), true);
   assert.equal(formatFirebaseAuthErrorFr(suspendedErr), suspendedErr.message);
 });
+
+test('Sales users can create products but cannot edit or delete products', () => {
+  const entityAdmin: UserProfile = { ...SALES_IMPROVEO, uid: 'u-ea', role: 'entity_admin' };
+  const manager: UserProfile = { ...SALES_IMPROVEO, uid: 'u-mgr', role: 'manager' };
+  const inactiveSales: UserProfile = { ...SALES_IMPROVEO, active: false };
+
+  assert.equal(PRODUCT_ACCESS_DENIED_MESSAGE, "Vous n'avez pas les accès requis");
+
+  assert.equal(canCreateProductRecord(SUPER_ADMIN), true);
+  assert.equal(canCreateProductRecord(entityAdmin), true);
+  assert.equal(canCreateProductRecord(manager), true);
+  assert.equal(canCreateProductRecord(SALES_IMPROVEO), true);
+  assert.equal(canCreateProductRecord(READER_USER), false);
+  assert.equal(canCreateProductRecord(inactiveSales), false);
+  assert.equal(canCreateProductRecord(null), false);
+
+  assert.equal(canEditProductRecord(SUPER_ADMIN), true);
+  assert.equal(canEditProductRecord(entityAdmin), true);
+  assert.equal(canEditProductRecord(manager), true);
+  assert.equal(canEditProductRecord(SALES_IMPROVEO), false);
+  assert.equal(canEditProductRecord(READER_USER), false);
+  assert.equal(canEditProductRecord(null), false);
+
+  assert.equal(canDeleteProductRecord(SALES_IMPROVEO), false);
+  assert.equal(canDeleteProductRecord(READER_USER), false);
+});
+

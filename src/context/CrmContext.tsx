@@ -107,6 +107,7 @@ import {
   ensureUserProfile,
   markNotificationReadDoc,
   recordPaymentAndUpdateInvoice,
+  renameProductCatalogFieldDoc,
   saveActionDoc,
   saveCompanyDoc,
   saveComplaintDoc,
@@ -133,8 +134,10 @@ import {
   updateUserDoc,
 } from '../services/firestoreService';
 import {
+  canCreateProductRecord,
   canDeleteProductRecord,
   canDeleteUserAccount,
+  canEditProductRecord,
   canManageSettings,
   canViewAllEntities,
   filterActionsByScope,
@@ -144,21 +147,28 @@ import {
   getAuthorizedEntities,
   isBootstrappedSuperAdminEmail,
   mergeDefaultRecordsById,
+  PRODUCT_ACCESS_DENIED_MESSAGE,
   setActiveDefaultCurrency,
   type FirestoreConnectionStatus,
 } from '../utils/crmLogic';
 import {
   addDaysToDateIso,
+  addManagedCatalogValue,
   canValidateInvoices,
   computeDocumentTotals,
   computeInvoiceTotals,
+  DEFAULT_PRODUCT_CATEGORIES,
+  DEFAULT_PRODUCT_FOLDERS,
   getEntityShortCode,
+  getManagedCatalogList,
   getNextSequenceNumber,
   isNotificationUnreadByUser,
   isNotificationVisibleToUser,
   mergeCompanyRecords,
   mergeContactRecords,
   recalculateInvoiceWithPayments,
+  removeManagedCatalogValue,
+  renameManagedCatalogValue,
   requiresSuperAdminValidation,
   type LineInput,
 } from '../utils/billingLogic';
@@ -243,6 +253,8 @@ interface CrmContextValue {
   companies: Company[];
   contacts: Contact[];
   products: Product[];
+  productFolderOptions: string[];
+  productCategoryOptions: string[];
   // Scoped & raw entities
   prospects: Prospect[];
   scopedProspects: Prospect[];
@@ -369,6 +381,12 @@ interface CrmContextValue {
   saveTag: (tag: CrmTag, isNew: boolean) => Promise<void>;
   deleteTag: (tagId: string) => Promise<void>;
   saveSettings: (nextSettings: CrmSettings) => Promise<void>;
+  addCatalogFolder: (name: string) => Promise<void>;
+  renameCatalogFolder: (oldName: string, newName: string) => Promise<number>;
+  deleteCatalogFolder: (name: string) => Promise<void>;
+  addCatalogCategory: (name: string) => Promise<void>;
+  renameCatalogCategory: (oldName: string, newName: string) => Promise<number>;
+  deleteCatalogCategory: (name: string) => Promise<void>;
   seedFirestore: () => Promise<void>;
 }
 
@@ -2132,6 +2150,22 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
 
   // --- Products, Quotes, Invoices, Payments ---
   const saveProduct = async (product: Product, isNew: boolean) => {
+    if (isNew && !canCreateProductRecord(currentUser)) {
+      addToast({
+        type: 'error',
+        title: 'Accès refusé',
+        description: PRODUCT_ACCESS_DENIED_MESSAGE,
+      });
+      throw new Error(PRODUCT_ACCESS_DENIED_MESSAGE);
+    }
+    if (!isNew && !canEditProductRecord(currentUser)) {
+      addToast({
+        type: 'error',
+        title: 'Accès refusé',
+        description: PRODUCT_ACCESS_DENIED_MESSAGE,
+      });
+      throw new Error(PRODUCT_ACCESS_DENIED_MESSAGE);
+    }
     const now = new Date().toISOString();
     const payload = { ...product, updatedAt: now, createdAt: isNew ? now : product.createdAt };
     if (authMode === 'demo') {
@@ -2151,10 +2185,10 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     if (!canDeleteProductRecord(currentUser)) {
       addToast({
         type: 'error',
-        title: 'Suppression non autorisée',
-        description: 'Droits insuffisants pour supprimer un produit du catalogue.',
+        title: 'Accès refusé',
+        description: PRODUCT_ACCESS_DENIED_MESSAGE,
       });
-      return;
+      throw new Error(PRODUCT_ACCESS_DENIED_MESSAGE);
     }
     const target = products.find((p) => p.id === productId);
     if (authMode === 'demo') {
@@ -3219,6 +3253,192 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     addToast({ type: 'success', title: 'Préférences enregistrées' });
   };
 
+  const productFolderOptions = useMemo(
+    () =>
+      getManagedCatalogList(
+        settings.productFolders,
+        DEFAULT_PRODUCT_FOLDERS,
+        products.map((p) => p.folder)
+      ),
+    [settings.productFolders, products]
+  );
+
+  const productCategoryOptions = useMemo(
+    () =>
+      getManagedCatalogList(
+        settings.productCategories,
+        DEFAULT_PRODUCT_CATEGORIES,
+        products.map((p) => p.category)
+      ),
+    [settings.productCategories, products]
+  );
+
+  const persistCatalogLists = async (
+    nextSettings: CrmSettings,
+    toastTitle: string,
+    toastDescription?: string
+  ) => {
+    if (authMode === 'demo') {
+      persistDemoState((prev) => ({ ...prev, settings: nextSettings }));
+    } else {
+      setSettings(nextSettings);
+      await saveSettingsDoc(nextSettings);
+    }
+    addToast({ type: 'success', title: toastTitle, description: toastDescription });
+  };
+
+  const addCatalogFolder = async (name: string) => {
+    if (!assertSuperAdminSettings()) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const nextFolders = addManagedCatalogValue(productFolderOptions, trimmed);
+    const updated: CrmSettings = {
+      ...settings,
+      productFolders: nextFolders,
+      updatedByUid: currentUser?.uid ?? 'system',
+      updatedAt: new Date().toISOString(),
+    };
+    await persistCatalogLists(updated, 'Dossier ajouté', trimmed);
+  };
+
+  const renameCatalogFolder = async (oldName: string, newName: string): Promise<number> => {
+    if (!assertSuperAdminSettings()) return 0;
+    const trimmedNew = newName.trim();
+    const oldKey = oldName.trim().toLocaleLowerCase('fr');
+    if (!trimmedNew) return 0;
+    const nextFolders = renameManagedCatalogValue(productFolderOptions, oldName, trimmedNew);
+    const affectedProducts = products.filter(
+      (p) => (p.folder || '').trim().toLocaleLowerCase('fr') === oldKey
+    );
+    const now = new Date().toISOString();
+    const updatedSettings: CrmSettings = {
+      ...settings,
+      productFolders: nextFolders,
+      updatedByUid: currentUser?.uid ?? 'system',
+      updatedAt: now,
+    };
+
+    if (authMode === 'demo') {
+      persistDemoState((prev) => ({
+        ...prev,
+        settings: updatedSettings,
+        products: prev.products.map((p) =>
+          (p.folder || '').trim().toLocaleLowerCase('fr') === oldKey
+            ? { ...p, folder: trimmedNew, updatedAt: now }
+            : p
+        ),
+      }));
+    } else {
+      setSettings(updatedSettings);
+      await renameProductCatalogFieldDoc({
+        field: 'folder',
+        newValue: trimmedNew,
+        productIds: affectedProducts.map((p) => p.id),
+        settings: updatedSettings,
+      });
+    }
+
+    addToast({
+      type: 'success',
+      title: 'Dossier renommé',
+      description:
+        affectedProducts.length > 0
+          ? `« ${oldName} » → « ${trimmedNew} » (${affectedProducts.length} produit(s) mis à jour)`
+          : `« ${oldName} » → « ${trimmedNew} »`,
+    });
+    return affectedProducts.length;
+  };
+
+  const deleteCatalogFolder = async (name: string) => {
+    if (!assertSuperAdminSettings()) return;
+    const nextFolders = removeManagedCatalogValue(productFolderOptions, name);
+    const updated: CrmSettings = {
+      ...settings,
+      productFolders: nextFolders,
+      updatedByUid: currentUser?.uid ?? 'system',
+      updatedAt: new Date().toISOString(),
+    };
+    await persistCatalogLists(updated, 'Dossier supprimé', name);
+  };
+
+  const addCatalogCategory = async (name: string) => {
+    if (!assertSuperAdminSettings()) return;
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const nextCategories = addManagedCatalogValue(productCategoryOptions, trimmed);
+    const updated: CrmSettings = {
+      ...settings,
+      productCategories: nextCategories,
+      updatedByUid: currentUser?.uid ?? 'system',
+      updatedAt: new Date().toISOString(),
+    };
+    await persistCatalogLists(updated, 'Catégorie ajoutée', trimmed);
+  };
+
+  const renameCatalogCategory = async (oldName: string, newName: string): Promise<number> => {
+    if (!assertSuperAdminSettings()) return 0;
+    const trimmedNew = newName.trim();
+    const oldKey = oldName.trim().toLocaleLowerCase('fr');
+    if (!trimmedNew) return 0;
+    const nextCategories = renameManagedCatalogValue(
+      productCategoryOptions,
+      oldName,
+      trimmedNew
+    );
+    const affectedProducts = products.filter(
+      (p) => (p.category || '').trim().toLocaleLowerCase('fr') === oldKey
+    );
+    const now = new Date().toISOString();
+    const updatedSettings: CrmSettings = {
+      ...settings,
+      productCategories: nextCategories,
+      updatedByUid: currentUser?.uid ?? 'system',
+      updatedAt: now,
+    };
+
+    if (authMode === 'demo') {
+      persistDemoState((prev) => ({
+        ...prev,
+        settings: updatedSettings,
+        products: prev.products.map((p) =>
+          (p.category || '').trim().toLocaleLowerCase('fr') === oldKey
+            ? { ...p, category: trimmedNew, updatedAt: now }
+            : p
+        ),
+      }));
+    } else {
+      setSettings(updatedSettings);
+      await renameProductCatalogFieldDoc({
+        field: 'category',
+        newValue: trimmedNew,
+        productIds: affectedProducts.map((p) => p.id),
+        settings: updatedSettings,
+      });
+    }
+
+    addToast({
+      type: 'success',
+      title: 'Catégorie renommée',
+      description:
+        affectedProducts.length > 0
+          ? `« ${oldName} » → « ${trimmedNew} » (${affectedProducts.length} produit(s) mis à jour)`
+          : `« ${oldName} » → « ${trimmedNew} »`,
+    });
+    return affectedProducts.length;
+  };
+
+  const deleteCatalogCategory = async (name: string) => {
+    if (!assertSuperAdminSettings()) return;
+    const nextCategories = removeManagedCatalogValue(productCategoryOptions, name);
+    const updated: CrmSettings = {
+      ...settings,
+      productCategories: nextCategories,
+      updatedByUid: currentUser?.uid ?? 'system',
+      updatedAt: new Date().toISOString(),
+    };
+    await persistCatalogLists(updated, 'Catégorie supprimée', name);
+  };
+
   const seedFirestore = async () => {
     if (!assertSuperAdminSettings()) return;
     if (authMode === 'demo') {
@@ -3272,6 +3492,8 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         companies,
         contacts,
         products,
+        productFolderOptions,
+        productCategoryOptions,
         prospects,
         scopedProspects,
         leads,
@@ -3375,6 +3597,12 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         saveTag,
         deleteTag,
         saveSettings,
+        addCatalogFolder,
+        renameCatalogFolder,
+        deleteCatalogFolder,
+        addCatalogCategory,
+        renameCatalogCategory,
+        deleteCatalogCategory,
         seedFirestore,
       }}
     >
