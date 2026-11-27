@@ -4,6 +4,7 @@ import {
   getAuth,
   GoogleAuthProvider,
   sendEmailVerification,
+  signInWithEmailAndPassword,
   signOut,
   updateProfile,
   type Auth,
@@ -197,20 +198,44 @@ export async function createAuthUserAsAdmin(
   );
   const secondaryAuth = getAuth(secondaryApp);
   try {
-    const credential = await createUserWithEmailAndPassword(
-      secondaryAuth,
-      email.trim(),
-      password
-    );
-    if (displayName.trim()) {
-      await updateProfile(credential.user, { displayName: displayName.trim() });
-    }
+    let userCredential;
     try {
-      await sendEmailVerification(credential.user);
-    } catch {
-      // L'envoi de vérification email reste non bloquant
+      userCredential = await createUserWithEmailAndPassword(
+        secondaryAuth,
+        email.trim(),
+        password
+      );
+    } catch (createErr) {
+      const code = (createErr as { code?: string })?.code ?? '';
+      if (code !== 'auth/email-already-in-use') {
+        throw createErr;
+      }
+      try {
+        userCredential = await signInWithEmailAndPassword(
+          secondaryAuth,
+          email.trim(),
+          password
+        );
+      } catch {
+        const err = new Error(
+          "Cette adresse email existe déjà dans Firebase Authentication (ancien compte supprimé du CRM). Saisissez le mot de passe existant de ce compte pour le réactiver, ou supprimez-le d'abord dans la console Firebase Authentication."
+        ) as Error & { code?: string };
+        err.code = 'auth/email-already-in-use-different-password';
+        throw err;
+      }
     }
-    const uid = credential.user.uid;
+
+    if (displayName.trim()) {
+      await updateProfile(userCredential.user, { displayName: displayName.trim() });
+    }
+    if (!userCredential.user.emailVerified) {
+      try {
+        await sendEmailVerification(userCredential.user);
+      } catch {
+        // L'envoi de vérification email reste non bloquant
+      }
+    }
+    const uid = userCredential.user.uid;
     await signOut(secondaryAuth);
     return { uid };
   } finally {

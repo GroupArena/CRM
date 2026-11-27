@@ -25,6 +25,8 @@ export function LoginPage() {
     firestoreOffline,
     firestoreConnectionStatus,
     authConnectionError,
+    authAccessError,
+    clearAuthAccessError,
     retryFirebaseConnection,
   } = useAuth();
   const [email, setEmail] = useState('');
@@ -32,6 +34,8 @@ export function LoginPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const displayedError = errorMsg || authAccessError;
 
   const showDemoOption = shouldShowDemoModeOption({
     firebaseAvailable,
@@ -48,6 +52,7 @@ export function LoginPage() {
     }
     setLoading(true);
     setErrorMsg(null);
+    clearAuthAccessError();
     setInfoMsg(null);
     try {
       await loginWithEmail(email, password);
@@ -172,16 +177,16 @@ export function LoginPage() {
             />
           </div>
 
-          {errorMsg && (
+          {displayedError && (
             <div
               role="alert"
               className="mb-5 rounded-lg border border-[#7A1F2B]/30 bg-[#7A1F2B]/10 px-4 py-3 text-sm text-[#7A1F2B]"
             >
-              {errorMsg}
+              {displayedError}
             </div>
           )}
 
-          {(firestoreOffline || authConnectionError) && !errorMsg && (
+          {(firestoreOffline || authConnectionError) && !displayedError && (
             <div
               role="alert"
               className="mb-5 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-xs text-amber-900 space-y-2.5"
@@ -283,7 +288,10 @@ export function LoginPage() {
                     type="email"
                     autoComplete="email"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (authAccessError) clearAuthAccessError();
+                    }}
                     placeholder="nom@arena-group.fr"
                     className="w-full h-10 rounded-lg border border-[#E1E4EA] pl-9 pr-3 text-sm text-[#19283E] focus:border-[#C9A125] focus:outline-none"
                     required
@@ -305,7 +313,10 @@ export function LoginPage() {
                     type="password"
                     autoComplete="current-password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value);
+                      if (authAccessError) clearAuthAccessError();
+                    }}
                     placeholder="••••••••"
                     className="w-full h-10 rounded-lg border border-[#E1E4EA] pl-9 pr-3 text-sm text-[#19283E] focus:border-[#C9A125] focus:outline-none"
                     required

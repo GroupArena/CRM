@@ -3,6 +3,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   onSnapshot,
   query,
@@ -22,7 +23,11 @@ import {
   OperationType,
   recoverFirestoreNetwork,
 } from '../firebase';
-import { isFirestoreOfflineError } from '../utils/firebaseErrors';
+import {
+  AccountAccessDeniedError,
+  isAccountAccessDeniedError,
+  isFirestoreOfflineError,
+} from '../utils/firebaseErrors';
 import type {
   AuditLog,
   Company,
@@ -66,6 +71,7 @@ import {
 } from './seedData';
 import { formatDocumentNumber } from '../utils/billingLogic';
 import {
+  isBootstrappedSuperAdminEmail,
   normalizeProductForWrite,
   resolveBootstrappedUserProfile,
   sanitizeUserProfileForWrite,
@@ -98,6 +104,55 @@ export class FirestoreConnectionError extends Error {
   }
 }
 
+async function fetchUserDocFromServer(uid: string) {
+  if (!db) throw new Error('Firestore non initialisé.');
+  const userRef = doc(db, 'users', uid);
+  try {
+    return await getDocFromServer(userRef);
+  } catch (readError) {
+    if (!isFirestoreOfflineError(readError)) {
+      throw readError;
+    }
+    await recoverFirestoreNetwork();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    return await getDocFromServer(userRef);
+  }
+}
+
+export async function checkUserAccountAuthorized(
+  uid: string,
+  email: string
+): Promise<void> {
+  if (!db) throw new Error('Firestore non initialisé.');
+  if (isBootstrappedSuperAdminEmail(email)) return;
+  try {
+    const snap = await fetchUserDocFromServer(uid);
+    if (!snap.exists()) {
+      throw new AccountAccessDeniedError(
+        'auth/account-deleted',
+        "Ce compte utilisateur a été supprimé ou n'est pas autorisé à accéder au CRM."
+      );
+    }
+    const data = snap.data() as Partial<UserProfile>;
+    if (data.active === false) {
+      throw new AccountAccessDeniedError(
+        'auth/account-suspended',
+        'Ce compte utilisateur est suspendu. Contactez un administrateur.'
+      );
+    }
+  } catch (error) {
+    if (isAccountAccessDeniedError(error)) {
+      throw error;
+    }
+    if (isFirestoreOfflineError(error)) {
+      throw new FirestoreConnectionError(
+        'Cloud Firestore est temporairement inaccessible (client hors ligne ou délai dépassé).'
+      );
+    }
+    handleFirestoreError(error, OperationType.GET, `users/${uid}`);
+  }
+}
+
 export async function ensureUserProfile(
   uid: string,
   email: string,
@@ -107,17 +162,7 @@ export async function ensureUserProfile(
   const userRef = doc(db, 'users', uid);
   const allEntityIds = DEFAULT_ENTITIES.map((e) => e.id);
   try {
-    let snap;
-    try {
-      snap = await getDoc(userRef);
-    } catch (readError) {
-      if (!isFirestoreOfflineError(readError)) {
-        throw readError;
-      }
-      await recoverFirestoreNetwork();
-      await new Promise((resolve) => setTimeout(resolve, 600));
-      snap = await getDoc(userRef);
-    }
+    const snap = await fetchUserDocFromServer(uid);
 
     const existing = snap.exists()
       ? normalizeDoc<UserProfile>(snap.id, snap.data())
@@ -129,6 +174,20 @@ export async function ensureUserProfile(
       existing,
       allEntityIds
     );
+
+    if (resolved.accessDeniedReason === 'deleted_or_unauthorized') {
+      throw new AccountAccessDeniedError(
+        'auth/account-deleted',
+        "Ce compte utilisateur a été supprimé ou n'est pas autorisé à accéder au CRM."
+      );
+    }
+
+    if (resolved.accessDeniedReason === 'suspended') {
+      throw new AccountAccessDeniedError(
+        'auth/account-suspended',
+        'Ce compte utilisateur est suspendu. Contactez un administrateur.'
+      );
+    }
 
     if (resolved.needsCreate) {
       const profilePayload = {
@@ -142,7 +201,7 @@ export async function ensureUserProfile(
         updatedAt: serverTimestamp(),
       };
       await setDoc(userRef, profilePayload);
-      const createdSnap = await getDoc(userRef);
+      const createdSnap = await getDocFromServer(userRef);
       return normalizeDoc<UserProfile>(createdSnap.id, createdSnap.data() ?? {});
     }
 
@@ -154,7 +213,7 @@ export async function ensureUserProfile(
           active: resolved.profile.active,
           updatedAt: serverTimestamp(),
         });
-        const updatedSnap = await getDoc(userRef);
+        const updatedSnap = await getDocFromServer(userRef);
         if (updatedSnap.exists()) {
           return normalizeDoc<UserProfile>(updatedSnap.id, updatedSnap.data());
         }
@@ -168,6 +227,9 @@ export async function ensureUserProfile(
 
     return resolved.profile;
   } catch (error) {
+    if (isAccountAccessDeniedError(error) || error instanceof FirestoreConnectionError) {
+      throw error;
+    }
     if (isFirestoreOfflineError(error)) {
       throw new FirestoreConnectionError(
         'Cloud Firestore est temporairement inaccessible (client hors ligne ou délai dépassé).'
@@ -729,8 +791,42 @@ export async function updateUserDoc(user: UserProfile): Promise<void> {
   }
 }
 
-export async function deleteUserDoc(uid: string): Promise<void> {
-  return deleteCollectionDoc('users', uid);
+export async function deleteUserDoc(
+  docId: string,
+  uid?: string,
+  email?: string
+): Promise<void> {
+  if (!db) throw new Error('Firestore non initialisé.');
+  const database = db;
+  const targetDocIds = new Set<string>();
+  if (docId.trim()) targetDocIds.add(docId.trim());
+  if (uid && uid.trim()) targetDocIds.add(uid.trim());
+
+  try {
+    const uidToQuery = (uid || docId).trim();
+    if (uidToQuery) {
+      const byUidSnap = await getDocs(
+        query(collection(database, 'users'), where('uid', '==', uidToQuery))
+      );
+      byUidSnap.docs.forEach((d) => targetDocIds.add(d.id));
+    }
+
+    const cleanEmail = email?.trim();
+    if (cleanEmail) {
+      const byEmailSnap = await getDocs(
+        query(collection(database, 'users'), where('email', '==', cleanEmail))
+      );
+      byEmailSnap.docs.forEach((d) => targetDocIds.add(d.id));
+    }
+
+    const batch = writeBatch(database);
+    for (const id of targetDocIds) {
+      batch.delete(doc(database, 'users', id));
+    }
+    await batch.commit();
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `users/${docId}`);
+  }
 }
 
 export async function saveTagDoc(tag: CrmTag, isNew: boolean): Promise<void> {

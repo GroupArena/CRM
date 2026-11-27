@@ -25,6 +25,11 @@ import {
   validateDealInput,
   validateProspectInput,
 } from './crmLogic';
+import {
+  AccountAccessDeniedError,
+  formatFirebaseAuthErrorFr,
+  isAccountAccessDeniedError,
+} from './firebaseErrors';
 import type { CrmAction, CrmEntity, Deal, Product, Prospect, UserProfile } from '../types';
 
 const ENTITIES: CrmEntity[] = [
@@ -277,16 +282,27 @@ test('Bootstrapped Super Admin detection and existing reader profile promotion',
   assert.equal(freshAdmin.profile.role, 'super_admin');
   assert.deepEqual(freshAdmin.profile.entityIds, entityIds);
 
-  const freshStandard = resolveBootstrappedUserProfile(
+  const deletedOrUnauthorizedUser = resolveBootstrappedUserProfile(
     'uid-2',
     'sales@arenabusinesscenter.com',
     '',
     null,
     entityIds
   );
-  assert.equal(freshStandard.needsCreate, true);
-  assert.equal(freshStandard.profile.role, 'reader');
-  assert.deepEqual(freshStandard.profile.entityIds, []);
+  assert.equal(deletedOrUnauthorizedUser.needsCreate, false);
+  assert.equal(deletedOrUnauthorizedUser.needsUpdate, false);
+  assert.equal(deletedOrUnauthorizedUser.accessDeniedReason, 'deleted_or_unauthorized');
+
+  const suspendedUser = resolveBootstrappedUserProfile(
+    'uid-2b',
+    'sales@arenabusinesscenter.com',
+    'Commercial',
+    { ...SALES_IMPROVEO, uid: 'uid-2b', email: 'sales@arenabusinesscenter.com', active: false },
+    entityIds
+  );
+  assert.equal(suspendedUser.needsCreate, false);
+  assert.equal(suspendedUser.needsUpdate, false);
+  assert.equal(suspendedUser.accessDeniedReason, 'suspended');
 
   const staleReaderAdmin: UserProfile = {
     uid: 'uid-1',
@@ -501,4 +517,20 @@ test('shouldShowDemoModeOption hides demo button when Firestore connection is he
     }),
     true
   );
+});
+
+test('AccountAccessDeniedError preserves explicit French message in formatFirebaseAuthErrorFr', () => {
+  const deletedErr = new AccountAccessDeniedError(
+    'auth/account-deleted',
+    "Ce compte utilisateur a été supprimé ou n'est pas autorisé à accéder au CRM."
+  );
+  assert.equal(isAccountAccessDeniedError(deletedErr), true);
+  assert.equal(formatFirebaseAuthErrorFr(deletedErr), deletedErr.message);
+
+  const suspendedErr = new AccountAccessDeniedError(
+    'auth/account-suspended',
+    'Ce compte utilisateur est suspendu. Contactez un administrateur.'
+  );
+  assert.equal(isAccountAccessDeniedError(suspendedErr), true);
+  assert.equal(formatFirebaseAuthErrorFr(suspendedErr), suspendedErr.message);
 });

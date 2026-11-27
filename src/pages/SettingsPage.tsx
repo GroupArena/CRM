@@ -2281,7 +2281,7 @@ export function SettingsPage() {
       >
         <div className="space-y-4">
           <p className="text-sm text-slate-600">
-            La suppression du profil révoque immédiatement ses droits d&apos;accès au CRM Arena Group.
+            La suppression efface immédiatement son profil dans la base de données et bloque définitivement toute reconnexion au CRM Arena Group.
           </p>
           <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-200">
             <button

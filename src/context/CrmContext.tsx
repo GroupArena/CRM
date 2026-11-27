@@ -16,7 +16,12 @@ import {
   recoverFirestoreNetwork,
   testFirestoreConnection,
 } from '../firebase';
-import { formatFirebaseAuthErrorFr, isFirestoreOfflineError } from '../utils/firebaseErrors';
+import {
+  formatFirebaseAuthErrorFr,
+  isAccountAccessDeniedError,
+  isFirestoreOfflineError,
+  isFirestorePermissionError,
+} from '../utils/firebaseErrors';
 import type {
   AuditLog,
   Company,
@@ -92,6 +97,7 @@ import {
   allocateDocumentNumberFirestore,
   appendAuditLog,
   buildEntityConstraints,
+  checkUserAccountAuthorized,
   createUserDoc,
   deleteCollectionDoc,
   deleteProductDoc,
@@ -136,6 +142,7 @@ import {
   filterProspectsByScope,
   formatCurrency,
   getAuthorizedEntities,
+  isBootstrappedSuperAdminEmail,
   mergeDefaultRecordsById,
   setActiveDefaultCurrency,
   type FirestoreConnectionStatus,
@@ -221,6 +228,8 @@ interface CrmContextValue {
   firestoreOffline: boolean;
   firestoreConnectionStatus: FirestoreConnectionStatus;
   authConnectionError: string | null;
+  authAccessError: string | null;
+  clearAuthAccessError: () => void;
   retryFirebaseConnection: () => Promise<boolean>;
   currentUser: UserProfile | null;
   selectedEntityId: EntityScope;
@@ -470,6 +479,8 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     isFirebaseConfigured ? 'checking' : 'offline'
   );
   const [authConnectionError, setAuthConnectionError] = useState<string | null>(null);
+  const [authAccessError, setAuthAccessError] = useState<string | null>(null);
+  const clearAuthAccessError = useCallback(() => setAuthAccessError(null), []);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
   const [selectedEntityId, setSelectedEntityId] = useState<EntityScope>('all');
@@ -635,6 +646,39 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     setSettings(DEFAULT_SETTINGS);
   }, []);
 
+  const forceSignOutWithReason = useCallback(
+    async (message: string) => {
+      setAuthAccessError(message);
+      setPendingVerificationEmail(null);
+      setAuthConnectionError(null);
+      setCurrentUser(null);
+      resetBusinessState();
+      setAuthMode('unauthenticated');
+      if (auth?.currentUser) {
+        try {
+          await signOut(auth);
+        } catch {
+          // Ignorer si déjà déconnecté
+        }
+      }
+    },
+    [resetBusinessState]
+  );
+
+  const verifyActiveUserOrSignOut = useCallback(
+    async (uid: string, email: string) => {
+      if (isBootstrappedSuperAdminEmail(email)) return;
+      try {
+        await checkUserAccountAuthorized(uid, email);
+      } catch (err) {
+        if (isAccountAccessDeniedError(err)) {
+          await forceSignOutWithReason(err.message);
+        }
+      }
+    },
+    [forceSignOutWithReason]
+  );
+
   const loadFirebaseProfile = useCallback(async (fbUser: User): Promise<boolean> => {
     try {
       setPendingVerificationEmail(null);
@@ -647,6 +691,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       setFirestoreOffline(false);
       setFirestoreConnectionStatus('connected');
       setAuthConnectionError(null);
+      setAuthAccessError(null);
       setCurrentUser(profile);
       setSelectedEntityId(
         canViewAllEntities(profile) ? 'all' : profile.entityIds[0] ?? 'all'
@@ -654,6 +699,10 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       setAuthMode('firebase');
       return true;
     } catch (err) {
+      if (isAccountAccessDeniedError(err)) {
+        await forceSignOutWithReason(err.message);
+        throw err;
+      }
       if (isFirestoreOfflineError(err)) {
         setFirestoreOffline(true);
         setFirestoreConnectionStatus('offline');
@@ -667,7 +716,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       setAuthMode('unauthenticated');
       return false;
     }
-  }, [resetBusinessState]);
+  }, [forceSignOutWithReason, resetBusinessState]);
 
   const retryFirebaseConnection = useCallback(async (): Promise<boolean> => {
     if (!isFirebaseConfigured || !auth) {
@@ -687,7 +736,11 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     }
     setAuthConnectionError(null);
     if (auth.currentUser?.emailVerified) {
-      return loadFirebaseProfile(auth.currentUser);
+      try {
+        return await loadFirebaseProfile(auth.currentUser);
+      } catch {
+        return false;
+      }
     }
     return true;
   }, [loadFirebaseProfile]);
@@ -730,16 +783,32 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       if (!fbUser) {
         setPendingVerificationEmail(null);
         setAuthConnectionError(null);
+        setCurrentUser(null);
         setAuthMode((prev) => (prev === 'demo' ? 'demo' : 'unauthenticated'));
         return;
       }
       if (!fbUser.emailVerified) {
-        setPendingVerificationEmail(fbUser.email ?? '');
-        setCurrentUser(null);
-        setAuthMode('unauthenticated');
+        try {
+          await checkUserAccountAuthorized(fbUser.uid, fbUser.email ?? '');
+          setPendingVerificationEmail(fbUser.email ?? '');
+          setCurrentUser(null);
+          setAuthMode('unauthenticated');
+        } catch (err) {
+          if (isAccountAccessDeniedError(err)) {
+            await forceSignOutWithReason(err.message);
+          } else {
+            setPendingVerificationEmail(fbUser.email ?? '');
+            setCurrentUser(null);
+            setAuthMode('unauthenticated');
+          }
+        }
         return;
       }
-      await loadFirebaseProfile(fbUser);
+      try {
+        await loadFirebaseProfile(fbUser);
+      } catch {
+        // Accès refusé déjà traité par forceSignOutWithReason
+      }
     });
 
     return () => {
@@ -748,7 +817,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener('online', handleOnline);
       unsub();
     };
-  }, [enterDemoMode, loadFirebaseProfile, retryFirebaseConnection]);
+  }, [enterDemoMode, forceSignOutWithReason, loadFirebaseProfile, retryFirebaseConnection]);
 
   // Real-time Firestore listeners
   useEffect(() => {
@@ -777,6 +846,13 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     const notifiedSubErrors = new Set<string>();
     const onSubError = (collectionName: string) => (error: unknown) => {
       console.error(`Erreur écoute Firestore (${collectionName}):`, error);
+      if (
+        !isBootstrappedSuperAdminEmail(currentUser.email) &&
+        isFirestorePermissionError(error)
+      ) {
+        void verifyActiveUserOrSignOut(currentUser.uid, currentUser.email);
+        return;
+      }
       if (!notifiedSubErrors.has(collectionName)) {
         notifiedSubErrors.add(collectionName);
         addToast({
@@ -818,6 +894,21 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
             return merged;
           });
           const selfRemote = normalized.find((u) => u.uid === currentUser.uid);
+          if (
+            !isBootstrappedSuperAdminEmail(currentUser.email) &&
+            (pendingUserWritesRef.current.get(currentUser.uid) ?? 0) === 0
+          ) {
+            if (!selfRemote) {
+              void verifyActiveUserOrSignOut(currentUser.uid, currentUser.email);
+              return;
+            }
+            if (selfRemote.active === false) {
+              void forceSignOutWithReason(
+                'Ce compte utilisateur est suspendu. Contactez un administrateur.'
+              );
+              return;
+            }
+          }
           if (selfRemote && (pendingUserWritesRef.current.get(currentUser.uid) ?? 0) === 0) {
             setCurrentUser((prev) => {
               if (!prev) return prev;
@@ -993,7 +1084,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     return () => {
       unsubs.forEach((fn) => fn());
     };
-  }, [authMode, currentUser, selectedEntityId, addToast]);
+  }, [authMode, currentUser, selectedEntityId, addToast, forceSignOutWithReason, verifyActiveUserOrSignOut]);
 
   const authorizedEntities = useMemo(
     () => getAuthorizedEntities(currentUser, entities),
@@ -1174,15 +1265,42 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
 
   const loginWithEmail = async (email: string, password: string) => {
     if (!auth) throw new Error('Firebase Auth non configuré.');
+    setAuthAccessError(null);
+    setAuthConnectionError(null);
     const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
     if (!cred.user.emailVerified) {
+      try {
+        await checkUserAccountAuthorized(cred.user.uid, cred.user.email ?? email.trim());
+      } catch (err) {
+        if (isAccountAccessDeniedError(err)) {
+          await forceSignOutWithReason(err.message);
+        }
+        throw err;
+      }
       setPendingVerificationEmail(cred.user.email ?? email.trim());
+      return;
     }
+    await loadFirebaseProfile(cred.user);
   };
 
   const loginWithGoogle = async () => {
     if (!auth) throw new Error('Firebase Auth non configuré.');
-    await signInWithPopup(auth, googleProvider);
+    setAuthAccessError(null);
+    setAuthConnectionError(null);
+    const cred = await signInWithPopup(auth, googleProvider);
+    if (!cred.user.emailVerified) {
+      try {
+        await checkUserAccountAuthorized(cred.user.uid, cred.user.email ?? '');
+      } catch (err) {
+        if (isAccountAccessDeniedError(err)) {
+          await forceSignOutWithReason(err.message);
+        }
+        throw err;
+      }
+      setPendingVerificationEmail(cred.user.email ?? '');
+      return;
+    }
+    await loadFirebaseProfile(cred.user);
   };
 
   const resendVerificationEmail = async () => {
@@ -1211,6 +1329,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       await signOut(auth);
     }
     setPendingVerificationEmail(null);
+    setAuthAccessError(null);
     setCurrentUser(null);
     resetBusinessState();
     setAuthMode('unauthenticated');
@@ -2949,6 +3068,9 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         uid = created.uid;
       } catch (err) {
         const code = (err as { code?: string })?.code ?? '';
+        if (code === 'auth/email-already-in-use-different-password') {
+          throw err instanceof Error ? err : new Error(formatFirebaseAuthErrorFr(err));
+        }
         if (code === 'auth/email-already-in-use') {
           throw new Error('Cette adresse email est déjà enregistrée dans Firebase Auth.');
         }
@@ -2999,7 +3121,9 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteUser = async (uid: string) => {
-    const target = users.find((u) => u.uid === uid);
+    const target = usersRef.current.find(
+      (u) => u.uid === uid || (u as UserProfile & { id?: string }).id === uid
+    );
     if (!target || !canDeleteUserAccount(currentUser, target)) {
       addToast({
         type: 'error',
@@ -3008,19 +3132,32 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       });
       return;
     }
+    const docId = (target as UserProfile & { id?: string }).id || target.uid;
     if (authMode === 'demo') {
       persistDemoState((prev) => ({
         ...prev,
-        users: prev.users.filter((u) => u.uid !== uid),
+        users: prev.users.filter((u) => u.uid !== target.uid),
       }));
     } else {
-      await deleteUserDoc(uid);
+      const previousUsers = usersRef.current;
+      const nextUsers = previousUsers.filter(
+        (u) => u.uid !== target.uid && (u as UserProfile & { id?: string }).id !== docId
+      );
+      usersRef.current = nextUsers;
+      setUsers(nextUsers);
+      try {
+        await deleteUserDoc(docId, target.uid, target.email);
+      } catch (err) {
+        usersRef.current = previousUsers;
+        setUsers(previousUsers);
+        throw err;
+      }
     }
     await recordLog(
       defaultEntityScopeId(),
       'user_deleted',
       'user',
-      uid,
+      target.uid,
       `Utilisateur supprimé : ${target.displayName} (${target.email}).`
     );
     addToast({
@@ -3121,6 +3258,8 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         firestoreOffline,
         firestoreConnectionStatus,
         authConnectionError,
+        authAccessError,
+        clearAuthAccessError,
         retryFirebaseConnection,
         currentUser,
         selectedEntityId,

@@ -726,7 +726,7 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && (
           isSuperAdmin() ||
-          (request.auth.uid == userId && incoming().uid == request.auth.uid && incoming().role == 'reader' && incoming().entityIds.size() == 0 && incoming().active == true)
+          (isBootstrappedSuperAdmin() && request.auth.uid == userId && incoming().uid == request.auth.uid && incoming().role == 'super_admin' && incoming().active == true)
         );
       allow update: if isVerified() && isValidId(userId) && isValidUser(incoming())
         && ((!('uid' in existing()) && incoming().uid == userId) || ('uid' in existing() && incoming().uid == existing().uid))

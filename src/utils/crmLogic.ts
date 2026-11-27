@@ -36,9 +36,12 @@ export function shouldShowDemoModeOption(params: {
   return false;
 }
 
+export type UserAccessDeniedReason = 'deleted_or_unauthorized' | 'suspended';
+
 export interface ResolvedUserProfileResult {
   needsCreate: boolean;
   needsUpdate: boolean;
+  accessDeniedReason?: UserAccessDeniedReason;
   profile: UserProfile;
 }
 
@@ -53,19 +56,39 @@ export function resolveBootstrappedUserProfile(
   const isBootstrapped = isBootstrappedSuperAdminEmail(cleanEmail);
 
   if (!existingProfile) {
+    const fallbackProfile: UserProfile = {
+      uid,
+      email: cleanEmail,
+      displayName: displayName.trim() || cleanEmail.split('@')[0] || 'Utilisateur',
+      role: isBootstrapped ? 'super_admin' : 'reader',
+      entityIds: isBootstrapped ? [...allEntityIds] : [],
+      active: isBootstrapped,
+      createdAt: '',
+      updatedAt: '',
+    };
+
+    if (!isBootstrapped) {
+      return {
+        needsCreate: false,
+        needsUpdate: false,
+        accessDeniedReason: 'deleted_or_unauthorized',
+        profile: fallbackProfile,
+      };
+    }
+
     return {
       needsCreate: true,
       needsUpdate: false,
-      profile: {
-        uid,
-        email: cleanEmail,
-        displayName: displayName.trim() || cleanEmail.split('@')[0] || 'Utilisateur',
-        role: isBootstrapped ? 'super_admin' : 'reader',
-        entityIds: isBootstrapped ? [...allEntityIds] : [],
-        active: true,
-        createdAt: '',
-        updatedAt: '',
-      },
+      profile: fallbackProfile,
+    };
+  }
+
+  if (!isBootstrapped && existingProfile.active === false) {
+    return {
+      needsCreate: false,
+      needsUpdate: false,
+      accessDeniedReason: 'suspended',
+      profile: existingProfile,
     };
   }
 

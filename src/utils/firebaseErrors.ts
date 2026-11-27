@@ -51,13 +51,44 @@ export function isFirestorePermissionError(error: unknown): boolean {
   );
 }
 
+export type AccountAccessDeniedCode =
+  | 'auth/account-deleted'
+  | 'auth/account-suspended';
+
+export class AccountAccessDeniedError extends Error {
+  code: AccountAccessDeniedCode;
+
+  constructor(code: AccountAccessDeniedCode, message: string) {
+    super(message);
+    this.name = 'AccountAccessDeniedError';
+    this.code = code;
+  }
+}
+
+export function isAccountAccessDeniedError(
+  error: unknown
+): error is AccountAccessDeniedError {
+  if (error instanceof AccountAccessDeniedError) {
+    return true;
+  }
+  const code = extractErrorCode(error);
+  return code === 'auth/account-deleted' || code === 'auth/account-suspended';
+}
+
 export function formatFirebaseAuthErrorFr(error: unknown): string {
+  const msg = extractErrorMessage(error);
+  const code = extractErrorCode(error);
+
+  if (
+    isAccountAccessDeniedError(error) ||
+    code === 'auth/email-already-in-use-different-password'
+  ) {
+    return msg || "Accès refusé. Contactez un administrateur.";
+  }
+
   if (isFirestoreOfflineError(error)) {
     return 'Impossible de joindre Cloud Firestore pour le moment (connexion lente ou hors ligne). Vérifiez votre réseau puis réessayez, ou utilisez le mode démonstration.';
   }
-
-  const msg = extractErrorMessage(error);
-  const code = extractErrorCode(error);
 
   if (
     code === 'auth/invalid-credential' ||
