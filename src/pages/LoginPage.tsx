@@ -4,9 +4,10 @@ import { useAuth } from '../hooks/useAuth';
 import { DEFAULT_ENTITIES } from '../services/seedData';
 import { ArenaSymbol, BrandLogo } from '../components/ui/BrandLogo';
 import { formatFirebaseAuthErrorFr } from '../utils/firebaseErrors';
+import { shouldShowDemoModeOption } from '../utils/crmLogic';
 
 const LOGIN_ENTITY_DESCRIPTIONS: Record<string, string> = {
-  'arena-business-center': 'Plateforme dédiée aux Entrepreneurs & Investisseurs',
+  'arena-business-center': 'Plateforme dédiée aux Entreprises & Investisseurs',
   improveo: 'Cabinet de conseils',
   'arena-studio-comm': 'Agence de communication',
   'maison-artisanat': 'Maison de production textile',
@@ -22,6 +23,7 @@ export function LoginPage() {
     enterDemoMode,
     firebaseAvailable,
     firestoreOffline,
+    firestoreConnectionStatus,
     authConnectionError,
     retryFirebaseConnection,
   } = useAuth();
@@ -30,6 +32,13 @@ export function LoginPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [infoMsg, setInfoMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const showDemoOption = shouldShowDemoModeOption({
+    firebaseAvailable,
+    firestoreConnectionStatus,
+    firestoreOffline,
+    authConnectionError,
+  });
 
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -314,19 +323,21 @@ export function LoginPage() {
             </form>
           )}
 
-          <div className="mt-6 pt-6 border-t border-[#E1E4EA]">
-            <p className="text-xs text-slate-600 mb-3">
-              Vous souhaitez tester immédiatement les fonctionnalités multi-entités avec un jeu de données de démonstration ?
-            </p>
-            <button
-              type="button"
-              onClick={() => enterDemoMode()}
-              className="w-full h-10 rounded-lg border border-[#C9A125] bg-[#C9A125]/15 text-sm font-semibold text-[#19283E] hover:bg-[#C9A125]/25 transition-colors flex items-center justify-center gap-2"
-            >
-              Accéder à la démo interactive
-              <ArrowRight className="h-4 w-4 text-[#AD7300]" />
-            </button>
-          </div>
+          {showDemoOption && (
+            <div className="mt-6 pt-6 border-t border-[#E1E4EA]">
+              <p className="text-xs text-slate-600 mb-3">
+                Vous souhaitez tester immédiatement les fonctionnalités multi-entités avec un jeu de données de démonstration ?
+              </p>
+              <button
+                type="button"
+                onClick={() => enterDemoMode()}
+                className="w-full h-10 rounded-lg border border-[#C9A125] bg-[#C9A125]/15 text-sm font-semibold text-[#19283E] hover:bg-[#C9A125]/25 transition-colors flex items-center justify-center gap-2"
+              >
+                Accéder à la démo interactive
+                <ArrowRight className="h-4 w-4 text-[#AD7300]" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -1963,11 +1963,13 @@ export function SettingsPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-6 space-y-4">
             <h2 className="text-base font-semibold text-slate-900 flex items-center gap-2">
               <Database className="h-4 w-4 text-slate-500" />
-              Initialisation des données de démonstration
+              {authMode === 'firebase'
+                ? 'Initialisation des paramètres de structure'
+                : 'Initialisation des données de démonstration'}
             </h2>
             <p className="text-sm text-slate-600">
               {authMode === 'firebase'
-                ? 'Crée les 4 entités Arena Group, les contacts/entreprises partagés, devis, factures, paiements et séquences de test dans Firestore.'
+                ? 'Crée uniquement les paramètres structurels manquants dans Firestore (4 entités Arena Group, mentions légales, compteurs, pipelines et tags), sans ajouter aucune donnée de test.'
                 : 'Réinitialise le jeu de données local de démonstration avec les 4 entités Arena Group.'}
             </p>
             {canEditSettings && (
@@ -1981,7 +1983,7 @@ export function SettingsPage() {
                 {seeding
                   ? 'Initialisation en cours...'
                   : authMode === 'firebase'
-                  ? 'Initialiser Firestore avec les données démo'
+                  ? 'Initialiser la structure dans Firestore'
                   : 'Réinitialiser la démo locale'}
               </button>
             )}

@@ -63,26 +63,6 @@ import {
   DEFAULT_PIPELINES,
   DEFAULT_PIPELINE_STAGES,
   DEFAULT_TAGS,
-  DEMO_ACTIONS,
-  DEMO_AUDIT_LOGS,
-  DEMO_COMPANIES,
-  DEMO_COMPLAINTS,
-  DEMO_CONTACTS,
-  DEMO_DEALS,
-  DEMO_INVOICES,
-  DEMO_INVOICE_ITEMS,
-  DEMO_LEADS,
-  DEMO_NOTIFICATIONS,
-  DEMO_PAYMENTS,
-  DEMO_PRODUCTS,
-  DEMO_PROSPECTS,
-  DEMO_QUOTES,
-  DEMO_QUOTE_ITEMS,
-  DEMO_SATISFACTION_SURVEYS,
-  DEMO_SEQUENCES,
-  DEMO_SEQUENCE_ENROLLMENTS,
-  DEMO_SEQUENCE_STEPS,
-  DEMO_SERVICE_REQUESTS,
 } from './seedData';
 import { formatDocumentNumber } from '../utils/billingLogic';
 import {
@@ -374,29 +354,9 @@ async function seedMissingCollectionDefaults<T extends { id: string }>(
 export async function saveProductDoc(product: Product, isNew: boolean): Promise<void> {
   const payload = normalizeProductForWrite(product);
   await saveStandardDoc('products', payload, isNew);
-  await seedMissingCollectionDefaults('products', DEMO_PRODUCTS, product.id, (def) => {
-    const clean = normalizeProductForWrite(def);
-    delete clean.createdAt;
-    delete clean.updatedAt;
-    return {
-      ...clean,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-  });
 }
 
 export async function deleteProductDoc(productId: string): Promise<void> {
-  await seedMissingCollectionDefaults('products', DEMO_PRODUCTS, productId, (def) => {
-    const clean = normalizeProductForWrite(def);
-    delete clean.createdAt;
-    delete clean.updatedAt;
-    return {
-      ...clean,
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-  });
   await deleteCollectionDoc('products', productId);
 }
 
@@ -897,111 +857,6 @@ export async function seedFirestoreDatabase(currentUid: string): Promise<void> {
     await queueIfMissing('tags', DEFAULT_TAGS, (tag) => {
       const { createdAt: _c, updatedAt: _u, ...rest } = tag;
       return { ...rest, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('companies', DEMO_COMPANIES, (company) => {
-      const { createdAt: _c, updatedAt: _u, ...rest } = company;
-      return { ...rest, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('contacts', DEMO_CONTACTS, (contact) => {
-      const { createdAt: _c, updatedAt: _u, ...rest } = contact;
-      return { ...rest, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('products', DEMO_PRODUCTS, (product) => {
-      const clean = normalizeProductForWrite(product);
-      delete clean.createdAt;
-      delete clean.updatedAt;
-      return { ...clean, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('leads', DEMO_LEADS, (lead) => {
-      const { createdAt: _c, updatedAt: _u, ...rest } = lead;
-      return { ...rest, assignedToUid: currentUid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('sequences', DEMO_SEQUENCES, (seq) => {
-      const { createdAt: _c, updatedAt: _u, ...rest } = seq;
-      return { ...rest, createdByUid: currentUid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('sequenceSteps', DEMO_SEQUENCE_STEPS, (step) => ({ ...step }));
-
-    await queueIfMissing('sequenceEnrollments', DEMO_SEQUENCE_ENROLLMENTS, (enr) => {
-      const { updatedAt: _u, ...rest } = enr;
-      return { ...rest, updatedAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('prospects', DEMO_PROSPECTS, (prospect) => {
-      const { createdAt: _c, updatedAt: _u, lastActivityAt: _l, ...rest } = prospect;
-      return {
-        ...rest,
-        ownerUid: currentUid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        lastActivityAt: serverTimestamp(),
-      };
-    });
-
-    await queueIfMissing('actions', DEMO_ACTIONS, (action) => {
-      const { createdAt: _c, updatedAt: _u, ...rest } = action;
-      return {
-        ...rest,
-        assignedToUid: currentUid,
-        createdByUid: currentUid,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-    });
-
-    await queueIfMissing('opportunities', DEMO_DEALS, (deal) => {
-      const { createdAt: _c, updatedAt: _u, ...rest } = deal;
-      return { ...rest, ownerUid: currentUid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('quotes', DEMO_QUOTES, (quote) => {
-      const { createdAt: _c, updatedAt: _u, ...rest } = quote;
-      return { ...rest, createdByUid: currentUid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('quoteItems', DEMO_QUOTE_ITEMS, (qi) => ({ ...qi }));
-
-    await queueIfMissing('invoices', DEMO_INVOICES, (inv) => {
-      const { createdAt: _c, updatedAt: _u, ...rest } = inv;
-      return { ...rest, createdByUid: currentUid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('invoiceItems', DEMO_INVOICE_ITEMS, (ii) => ({ ...ii }));
-
-    await queueIfMissing('payments', DEMO_PAYMENTS, (pay) => {
-      const { createdAt: _c, ...rest } = pay;
-      return { ...rest, recordedByUid: currentUid, createdAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('complaints', DEMO_COMPLAINTS, (comp) => {
-      const { createdAt: _c, updatedAt: _u, ...rest } = comp;
-      return { ...rest, assignedToUid: currentUid, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('serviceRequests', DEMO_SERVICE_REQUESTS, (sr) => {
-      const { createdAt: _c, updatedAt: _u, ...rest } = sr;
-      return { ...rest, createdAt: serverTimestamp(), updatedAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('satisfactionSurveys', DEMO_SATISFACTION_SURVEYS, (surv) => {
-      const { createdAt: _c, ...rest } = surv;
-      return { ...rest, createdAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('auditLogs', DEMO_AUDIT_LOGS, (log) => {
-      const { createdAt: _c, ...rest } = log;
-      return { ...rest, actorUid: currentUid, createdAt: serverTimestamp() };
-    });
-
-    await queueIfMissing('notifications', DEMO_NOTIFICATIONS, (notif) => {
-      const { createdAt: _c, ...rest } = notif;
-      return { ...rest, actorUid: currentUid, createdAt: serverTimestamp() };
     });
 
     const existingSettings = await getExistingDocIds('settings');

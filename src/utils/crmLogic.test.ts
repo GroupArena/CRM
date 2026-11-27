@@ -20,6 +20,7 @@ import {
   resolveEffectiveActionStatus,
   sanitizeUserProfileForWrite,
   setActiveDefaultCurrency,
+  shouldShowDemoModeOption,
   validateActionInput,
   validateDealInput,
   validateProspectInput,
@@ -454,4 +455,50 @@ test('normalizeProductForWrite omits blank sku so Firestore rules allow saving',
   assert.equal(withSku.sku, 'SKU-42');
 });
 
-
+test('shouldShowDemoModeOption hides demo button when Firestore connection is healthy or checking', () => {
+  assert.equal(
+    shouldShowDemoModeOption({
+      firebaseAvailable: true,
+      firestoreConnectionStatus: 'connected',
+      firestoreOffline: false,
+      authConnectionError: null,
+    }),
+    false
+  );
+  assert.equal(
+    shouldShowDemoModeOption({
+      firebaseAvailable: true,
+      firestoreConnectionStatus: 'checking',
+      firestoreOffline: false,
+      authConnectionError: null,
+    }),
+    false
+  );
+  assert.equal(
+    shouldShowDemoModeOption({
+      firebaseAvailable: true,
+      firestoreConnectionStatus: 'offline',
+      firestoreOffline: true,
+      authConnectionError: null,
+    }),
+    true
+  );
+  assert.equal(
+    shouldShowDemoModeOption({
+      firebaseAvailable: true,
+      firestoreConnectionStatus: 'connected',
+      firestoreOffline: false,
+      authConnectionError: 'Erreur connexion profil',
+    }),
+    true
+  );
+  assert.equal(
+    shouldShowDemoModeOption({
+      firebaseAvailable: false,
+      firestoreConnectionStatus: 'offline',
+      firestoreOffline: false,
+      authConnectionError: null,
+    }),
+    true
+  );
+});

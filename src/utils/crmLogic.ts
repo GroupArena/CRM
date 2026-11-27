@@ -22,6 +22,20 @@ export function isBootstrappedSuperAdminEmail(email?: string | null): boolean {
   return (BOOTSTRAPPED_SUPER_ADMIN_EMAILS as readonly string[]).includes(normalized);
 }
 
+export type FirestoreConnectionStatus = 'checking' | 'connected' | 'offline';
+
+export function shouldShowDemoModeOption(params: {
+  firebaseAvailable: boolean;
+  firestoreConnectionStatus: FirestoreConnectionStatus;
+  firestoreOffline: boolean;
+  authConnectionError: string | null;
+}): boolean {
+  if (!params.firebaseAvailable) return true;
+  if (params.firestoreOffline || Boolean(params.authConnectionError)) return true;
+  if (params.firestoreConnectionStatus === 'offline') return true;
+  return false;
+}
+
 export interface ResolvedUserProfileResult {
   needsCreate: boolean;
   needsUpdate: boolean;

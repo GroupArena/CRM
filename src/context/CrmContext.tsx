@@ -138,6 +138,7 @@ import {
   getAuthorizedEntities,
   mergeDefaultRecordsById,
   setActiveDefaultCurrency,
+  type FirestoreConnectionStatus,
 } from '../utils/crmLogic';
 import {
   addDaysToDateIso,
@@ -218,6 +219,7 @@ interface CrmContextValue {
   authMode: AuthMode;
   firebaseAvailable: boolean;
   firestoreOffline: boolean;
+  firestoreConnectionStatus: FirestoreConnectionStatus;
   authConnectionError: string | null;
   retryFirebaseConnection: () => Promise<boolean>;
   currentUser: UserProfile | null;
@@ -463,6 +465,9 @@ function channelToActionType(channel: SequenceChannel): CrmAction['type'] {
 export function CrmProvider({ children }: { children: React.ReactNode }) {
   const [authMode, setAuthMode] = useState<AuthMode>('loading');
   const [firestoreOffline, setFirestoreOffline] = useState<boolean>(false);
+  const [firestoreConnectionStatus, setFirestoreConnectionStatus] = useState<FirestoreConnectionStatus>(
+    isFirebaseConfigured ? 'checking' : 'offline'
+  );
   const [authConnectionError, setAuthConnectionError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [pendingVerificationEmail, setPendingVerificationEmail] = useState<string | null>(null);
@@ -470,7 +475,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
   const [globalSearch, setGlobalSearch] = useState('');
 
   const [entities, setEntities] = useState<CrmEntity[]>(DEFAULT_ENTITIES);
-  const [users, setUsers] = useState<UserProfile[]>(DEMO_USERS);
+  const [users, setUsers] = useState<UserProfile[]>([]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [prospects, setProspects] = useState<Prospect[]>([]);
@@ -483,7 +488,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
   const [pipelines, setPipelines] = useState<Pipeline[]>(DEFAULT_PIPELINES);
   const [stages, setStages] = useState<PipelineStage[]>(DEFAULT_PIPELINE_STAGES);
   const [tags, setTags] = useState<CrmTag[]>(DEFAULT_TAGS);
-  const [products, setProducts] = useState<Product[]>(DEMO_PRODUCTS);
+  const [products, setProducts] = useState<Product[]>([]);
   const [quotes, setQuotes] = useState<Quote[]>([]);
   const [quoteItems, setQuoteItems] = useState<QuoteItem[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -590,15 +595,49 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     [applyDemoSnapshot]
   );
 
+  const resetBusinessState = useCallback(() => {
+    setEntities(DEFAULT_ENTITIES);
+    setUsers([]);
+    setCompanies([]);
+    setContacts([]);
+    setProspects([]);
+    setLeads([]);
+    setSequences([]);
+    setSequenceSteps([]);
+    setSequenceEnrollments([]);
+    setActions([]);
+    setDeals([]);
+    setPipelines(DEFAULT_PIPELINES);
+    setStages(DEFAULT_PIPELINE_STAGES);
+    setTags(DEFAULT_TAGS);
+    setProducts([]);
+    setQuotes([]);
+    setQuoteItems([]);
+    setInvoices([]);
+    setInvoiceItems([]);
+    setPayments([]);
+    setComplaints([]);
+    setServiceRequests([]);
+    setSatisfactionSurveys([]);
+    setIntegrations(DEFAULT_INTEGRATIONS);
+    setNumberingCounters(DEFAULT_NUMBERING_COUNTERS);
+    setLegalSettings(DEFAULT_LEGAL_SETTINGS);
+    setAuditLogs([]);
+    setNotifications([]);
+    setSettings(DEFAULT_SETTINGS);
+  }, []);
+
   const loadFirebaseProfile = useCallback(async (fbUser: User): Promise<boolean> => {
     try {
       setPendingVerificationEmail(null);
+      resetBusinessState();
       const profile = await ensureUserProfile(
         fbUser.uid,
         fbUser.email ?? '',
         fbUser.displayName ?? ''
       );
       setFirestoreOffline(false);
+      setFirestoreConnectionStatus('connected');
       setAuthConnectionError(null);
       setCurrentUser(profile);
       setSelectedEntityId(
@@ -609,6 +648,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       if (isFirestoreOfflineError(err)) {
         setFirestoreOffline(true);
+        setFirestoreConnectionStatus('offline');
         setAuthConnectionError(formatFirebaseAuthErrorFr(err));
       } else {
         setAuthConnectionError(
@@ -619,13 +659,18 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       setAuthMode('unauthenticated');
       return false;
     }
-  }, []);
+  }, [resetBusinessState]);
 
   const retryFirebaseConnection = useCallback(async (): Promise<boolean> => {
-    if (!isFirebaseConfigured || !auth) return false;
+    if (!isFirebaseConfigured || !auth) {
+      setFirestoreConnectionStatus('offline');
+      return false;
+    }
+    setFirestoreConnectionStatus('checking');
     await recoverFirestoreNetwork();
     const ok = await testFirestoreConnection();
     setFirestoreOffline(!ok);
+    setFirestoreConnectionStatus(ok ? 'connected' : 'offline');
     if (!ok) {
       setAuthConnectionError(
         'Impossible de joindre Cloud Firestore pour le moment (connexion lente ou hors ligne). Vérifiez votre réseau puis réessayez, ou utilisez le mode démonstration.'
@@ -649,18 +694,24 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (!isFirebaseConfigured || !auth) {
+      setFirestoreConnectionStatus('offline');
       setAuthMode('unauthenticated');
       return;
     }
 
     let cancelled = false;
+    setFirestoreConnectionStatus('checking');
     void testFirestoreConnection().then((ok) => {
       if (!cancelled) {
         setFirestoreOffline(!ok);
+        setFirestoreConnectionStatus(ok ? 'connected' : 'offline');
       }
     });
 
-    const handleOffline = () => setFirestoreOffline(true);
+    const handleOffline = () => {
+      setFirestoreOffline(true);
+      setFirestoreConnectionStatus('offline');
+    };
     const handleOnline = () => {
       void retryFirebaseConnection();
     };
@@ -751,7 +802,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       subscribeToCollection<Product>(
         'products',
         isManagerPlus ? [] : [where('active', '==', true)],
-        (items) => setProducts(items.length > 0 ? items : DEMO_PRODUCTS),
+        setProducts,
         onSubError('products')
       ),
       subscribeToCollection<CrmTag>(
@@ -1119,6 +1170,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     }
     setPendingVerificationEmail(null);
     setCurrentUser(null);
+    resetBusinessState();
     setAuthMode('unauthenticated');
   };
 
@@ -2940,8 +2992,8 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       await seedFirestoreDatabase(currentUser.uid);
       addToast({
         type: 'success',
-        title: 'Base Firestore initialisée',
-        description: 'Les 4 entités, contacts, devis, factures et pipelines ont été créés.',
+        title: 'Paramètres de base initialisés',
+        description: 'Les 4 entités, pipelines, mentions légales, compteurs et tags ont été créés sans données de test.',
       });
     } catch (error) {
       console.error('Erreur initialisation Firestore:', error);
@@ -2963,6 +3015,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         authMode,
         firebaseAvailable: isFirebaseConfigured,
         firestoreOffline,
+        firestoreConnectionStatus,
         authConnectionError,
         retryFirebaseConnection,
         currentUser,
