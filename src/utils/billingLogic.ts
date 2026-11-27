@@ -1404,4 +1404,23 @@ export function parseFormattedDescriptionLines(
   return result;
 }
 
+export function computeRemovedLineItemIds(
+  existingItems: Array<{ id: string }>,
+  nextItems: Array<{ id?: string }>
+): string[] {
+  const nextIds = new Set(
+    nextItems
+      .map((item) => item.id)
+      .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+  );
+  const seenRemoved = new Set<string>();
+  const removed: string[] = [];
+  for (const existing of existingItems) {
+    if (!existing.id || nextIds.has(existing.id) || seenRemoved.has(existing.id)) continue;
+    seenRemoved.add(existing.id);
+    removed.push(existing.id);
+  }
+  return removed;
+}
+
 

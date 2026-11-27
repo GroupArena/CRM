@@ -10,6 +10,7 @@ import {
   computeInvoiceTotals,
   computeLossReasonsBreakdown,
   computeProductMargin,
+  computeRemovedLineItemIds,
   computeRevenueByEntity,
   computeSequenceMetrics,
   DEFAULT_PRODUCT_CATEGORIES,
@@ -873,7 +874,10 @@ test('parseFormattedDescriptionLines preserves line breaks, dashes, indentation,
   });
 });
 
-
-
-
-
+test('computeRemovedLineItemIds identifies deleted quote/invoice items while preserving kept and newly added lines', () => {
+  const existing = [{ id: 'ii-1' }, { id: 'ii-2' }, { id: 'ii-3' }, { id: 'ii-2' }];
+  const next = [{ id: 'ii-1' }, { id: 'ii-3' }, { id: 'il-new-4' }, { id: undefined }];
+  assert.deepEqual(computeRemovedLineItemIds(existing, next), ['ii-2']);
+  assert.deepEqual(computeRemovedLineItemIds(existing, [{ id: 'ii-1' }]), ['ii-2', 'ii-3']);
+  assert.deepEqual(computeRemovedLineItemIds(existing, existing), []);
+});

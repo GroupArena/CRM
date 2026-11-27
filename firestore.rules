@@ -948,7 +948,12 @@ service cloud.firestore {
         && incoming().id == itemId && hasEntityAccess(incoming().entityId);
       allow update: if canWriteCrmData() && isValidId(itemId) && isValidQuoteItem(incoming())
         && incoming().id == existing().id && hasEntityAccess(existing().entityId);
-      allow delete: if isManagerOrAbove() && isValidId(itemId) && hasEntityAccess(existing().entityId);
+      allow delete: if isValidId(itemId)
+        && hasEntityAccess(existing().entityId)
+        && (
+          isManagerOrAbove()
+          || (canWriteCrmData() && existsAfter(/databases/$(database)/documents/quotes/$(existing().quoteId)))
+        );
     }
 
     match /invoices/{invoiceId} {
@@ -980,7 +985,15 @@ service cloud.firestore {
         && incoming().id == itemId && hasEntityAccess(incoming().entityId);
       allow update: if canWriteCrmData() && isValidId(itemId) && isValidInvoiceItem(incoming())
         && incoming().id == existing().id && hasEntityAccess(existing().entityId);
-      allow delete: if isSuperAdmin() && isValidId(itemId);
+      allow delete: if isValidId(itemId)
+        && (
+          isSuperAdmin()
+          || (
+            canWriteCrmData()
+            && hasEntityAccess(existing().entityId)
+            && existsAfter(/databases/$(database)/documents/invoices/$(existing().invoiceId))
+          )
+        );
     }
 
     match /payments/{paymentId} {

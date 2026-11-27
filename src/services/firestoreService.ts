@@ -495,7 +495,8 @@ export async function allocateDocumentNumberFirestore(
 export async function saveQuoteWithItems(
   quote: Quote,
   items: QuoteItem[],
-  isNew: boolean
+  isNew: boolean,
+  removedItemIds: string[] = []
 ): Promise<void> {
   if (!db) throw new Error('Firestore non initialisé.');
   try {
@@ -519,6 +520,14 @@ export async function saveQuoteWithItems(
         updatedAt: serverTimestamp(),
       });
     }
+    const keptIds = new Set(items.map((item) => item.id));
+    if (!isNew) {
+      for (const removedId of removedItemIds) {
+        if (removedId && !keptIds.has(removedId)) {
+          batch.delete(doc(db, 'quoteItems', removedId));
+        }
+      }
+    }
     for (const item of items) {
       const cleanItem: Record<string, unknown> = { ...item };
       for (const k of Object.keys(cleanItem)) {
@@ -539,7 +548,8 @@ export async function saveQuoteWithItems(
 export async function saveInvoiceWithItems(
   invoice: Invoice,
   items: InvoiceItem[],
-  isNew: boolean
+  isNew: boolean,
+  removedItemIds: string[] = []
 ): Promise<void> {
   if (!db) throw new Error('Firestore non initialisé.');
   try {
@@ -562,6 +572,14 @@ export async function saveInvoiceWithItems(
         ...cleanInv,
         updatedAt: serverTimestamp(),
       });
+    }
+    const keptIds = new Set(items.map((item) => item.id));
+    if (!isNew) {
+      for (const removedId of removedItemIds) {
+        if (removedId && !keptIds.has(removedId)) {
+          batch.delete(doc(db, 'invoiceItems', removedId));
+        }
+      }
     }
     for (const item of items) {
       const cleanItem: Record<string, unknown> = { ...item };

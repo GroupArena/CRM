@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Eye, FileEdit, Plus, Trash2, ShieldAlert } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { A4DocumentSheet } from './A4DocumentSheet';
@@ -84,6 +84,7 @@ export function InvoiceFormModal({
   const [activeTab, setActiveTab] = useState<'form' | 'preview'>('form');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const initializedFormKeyRef = useRef<string | null>(null);
 
   const entityProducts = useMemo(
     () =>
@@ -117,7 +118,14 @@ export function InvoiceFormModal({
   }, [deductedDepositInvoiceId, entityDepositOptions]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      initializedFormKeyRef.current = null;
+      return;
+    }
+    const formKey = initialInvoice ? `edit:${initialInvoice.id}` : 'new';
+    if (initializedFormKeyRef.current === formKey) return;
+    initializedFormKeyRef.current = formKey;
+
     setErrorMsg(null);
     setActiveTab('form');
     if (initialInvoice) {

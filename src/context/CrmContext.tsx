@@ -157,6 +157,7 @@ import {
   canValidateInvoices,
   computeDocumentTotals,
   computeInvoiceTotals,
+  computeRemovedLineItemIds,
   DEFAULT_PRODUCT_CATEGORIES,
   DEFAULT_PRODUCT_FOLDERS,
   getEntityShortCode,
@@ -2348,6 +2349,9 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       orderIndex: idx,
     }));
 
+    const existingQuoteItems = quoteItems.filter((qi) => qi.quoteId === quote.id);
+    const removedItemIds = computeRemovedLineItemIds(existingQuoteItems, items);
+
     if (authMode === 'demo') {
       persistDemoState((prev) => ({
         ...prev,
@@ -2358,7 +2362,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         ],
       }));
     } else {
-      await saveQuoteWithItems(updated, items, false);
+      await saveQuoteWithItems(updated, items, false, removedItemIds);
     }
     addToast({ type: 'success', title: `Devis ${quote.quoteNumber} enregistré` });
   };
@@ -2587,6 +2591,9 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
       orderIndex: idx,
     }));
 
+    const existingInvoiceItems = invoiceItems.filter((ii) => ii.invoiceId === invoice.id);
+    const removedItemIds = computeRemovedLineItemIds(existingInvoiceItems, items);
+
     if (authMode === 'demo') {
       persistDemoState((prev) => ({
         ...prev,
@@ -2597,7 +2604,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
         ],
       }));
     } else {
-      await saveInvoiceWithItems(updated, items, false);
+      await saveInvoiceWithItems(updated, items, false, removedItemIds);
     }
 
     if (isSalesEditor && currentUser && invoice.approvalStatus === 'rejected') {
