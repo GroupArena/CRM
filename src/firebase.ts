@@ -127,18 +127,19 @@ export function handleFirestoreError(
   operationType: OperationType,
   path: string | null
 ): never {
+  const isDev = Boolean(import.meta.env?.DEV);
   const errInfo: FirestoreErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
     authInfo: {
       userId: auth?.currentUser?.uid ?? null,
-      email: auth?.currentUser?.email ?? null,
+      email: isDev ? (auth?.currentUser?.email ?? null) : null,
       emailVerified: auth?.currentUser?.emailVerified ?? null,
       isAnonymous: auth?.currentUser?.isAnonymous ?? null,
       tenantId: auth?.currentUser?.tenantId ?? null,
       providerInfo:
         auth?.currentUser?.providerData?.map((provider) => ({
           providerId: provider.providerId,
-          email: provider.email,
+          email: isDev ? provider.email : null,
         })) ?? [],
     },
     operationType,

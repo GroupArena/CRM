@@ -38,9 +38,10 @@ import {
   type UserProfile,
   type UserRole,
 } from '../types';
-import { formatCurrency } from '../utils/crmLogic';
+import { formatCurrency, sanitizeSafeImageSrc } from '../utils/crmLogic';
 import {
   dedupeCatalogValues,
+  isValidHttpUrl,
   validateProductInput,
 } from '../utils/billingLogic';
 import {
@@ -321,6 +322,10 @@ export function SettingsPage() {
     if (!canEditSettings || !editingEntity) return;
     if (!editEntityName.trim()) {
       setEditEntityError("Le nom de l'entité est obligatoire.");
+      return;
+    }
+    if (!isValidHttpUrl(editEntityLogoUrl)) {
+      setEditEntityError("L'URL du logo doit commencer par http:// ou https://.");
       return;
     }
     setSavingEntity(true);
@@ -1773,9 +1778,9 @@ export function SettingsPage() {
                           )}
                         </div>
                         <div className="h-20 rounded-md border border-dashed border-slate-300 bg-white flex items-center justify-center p-2 overflow-hidden">
-                          {draft.signatureImageUrl ? (
+                          {sanitizeSafeImageSrc(draft.signatureImageUrl) ? (
                             <img
-                              src={draft.signatureImageUrl}
+                              src={sanitizeSafeImageSrc(draft.signatureImageUrl)}
                               alt={`Signature ${entity.name}`}
                               className="max-h-full max-w-full object-contain"
                             />
@@ -1793,7 +1798,7 @@ export function SettingsPage() {
                             <input
                               id={`upload-sig-${entity.id}`}
                               type="file"
-                              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                              accept="image/png,image/jpeg,image/webp"
                               className="sr-only"
                               onChange={(e) => {
                                 const file = e.target.files?.[0];
@@ -1823,9 +1828,9 @@ export function SettingsPage() {
                           )}
                         </div>
                         <div className="h-20 rounded-md border border-dashed border-slate-300 bg-white flex items-center justify-center p-2 overflow-hidden">
-                          {draft.stampImageUrl ? (
+                          {sanitizeSafeImageSrc(draft.stampImageUrl) ? (
                             <img
-                              src={draft.stampImageUrl}
+                              src={sanitizeSafeImageSrc(draft.stampImageUrl)}
                               alt={`Tampon ${entity.name}`}
                               className="max-h-full max-w-full object-contain"
                             />
@@ -1843,7 +1848,7 @@ export function SettingsPage() {
                             <input
                               id={`upload-stamp-${entity.id}`}
                               type="file"
-                              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                              accept="image/png,image/jpeg,image/webp"
                               className="sr-only"
                               onChange={(e) => {
                                 const file = e.target.files?.[0];

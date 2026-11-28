@@ -28,17 +28,13 @@ npm run dev
 
 ## Configuration Firebase (Auth & Firestore)
 
-- **Projet Firebase provisionné** : `cool-acolyte-zlvvl`
-- **Base Cloud Firestore** : `ai-studio-fc7d5e1a-ce3e-4c8e-84ec-d119cb5294b3`
-- **Super Admin initial (bootstrap)** : `navalona.rajaonarivelo@gmail.com`
+- **Projet Firebase / Base Cloud Firestore** : renseignez vos identifiants dans `.env.local` (en local) ou via les GitHub Secrets dans `.github/workflows/deploy.yml` (en production).
 
 1. Dans la **Console Firebase**, activez **Authentication** :
-   - **Fournisseur Email/Mot de passe** : Authentication > Sign-in method > Email/Password > Activer.
-   - Créez votre compte administrateur (`navalona.rajaonarivelo@gmail.com`) dans **Authentication > Users** (les règles Firestore exigent une adresse email vérifiée : un lien de vérification est proposé automatiquement à la première connexion si nécessaire).
-2. Ajoutez vos domaines autorisés dans **Authentication > Settings > Authorized domains** :
-   - `localhost`
-   - `<votre-utilisateur>.github.io`
-3. Déployez les règles et index Firestore (les règles `firestore.rules` sont déjà déployées sur la base de l'applet ; utilisez la commande ci-dessous après modification locale) :
+   - **Fournisseur Adresse e-mail/Mot de passe** : Authentication > Mode de connexion > Adresse e-mail/Mot de passe > Activer.
+   - Créez le premier compte administrateur dans **Authentication > Utilisateurs** (les règles Firestore exigent une adresse e-mail vérifiée), puis créez son document correspondant dans **Firestore > `users/{uid}`** (`uid`, `email`, `displayName`, `role: "super_admin"`, `entityIds: ["arena-business-center", "improveo", "arena-studio-comm", "maison-artisanat"]`, `active: true`, `createdAt`, `updatedAt`).
+2. Ajoutez vos domaines autorisés dans **Authentication > Paramètres > Domaines autorisés** (`localhost`, domaine de production).
+3. Déployez les règles et index Firestore après modification :
 
 ```bash
 firebase deploy --only firestore:rules,firestore:indexes
@@ -50,28 +46,21 @@ firebase deploy --only firestore:rules,firestore:indexes
 - **En ligne de commande** :
 
 ```bash
-SEED_ADMIN_EMAIL="navalona.rajaonarivelo@gmail.com" SEED_ADMIN_PASSWORD="VotreMotDePasse" npx tsx scripts/seed.ts
+SEED_ADMIN_EMAIL="admin@votre-domaine.tld" SEED_ADMIN_PASSWORD="VotreMotDePasse" npx tsx scripts/seed.ts
 ```
 
 ## Mise en ligne sur GitHub & GitHub Pages
 
-1. Initialisez le dépôt Git local et poussez vers votre dépôt GitHub (branche `main`) :
-
-```bash
-git init -b main
-git add .
-git commit -m "Initialisation Arena Group CRM"
-git remote add origin https://github.com/<votre-utilisateur>/<votre-depot>.git
-git push -u origin main
-```
-
-2. Dans votre dépôt GitHub, ouvrez **Settings > Pages** et sélectionnez **Source : GitHub Actions**.
-3. Ajoutez les secrets dans **Settings > Secrets and variables > Actions** (optionnel si `firebase-applet-config.json` est conservé dans le dépôt, recommandé pour surcharger par environnement) :
+1. Ne versionnez jamais `.env*` (hors `.env.example`), les clés de compte de service (`*serviceAccount*.json`), ni `firebase-applet-config.json` sur un dépôt public.
+2. Initialisez le dépôt Git local et poussez vers votre dépôt distant (branche `main`).
+3. Dans votre dépôt GitHub, ouvrez **Settings > Pages** et sélectionnez **Source : GitHub Actions**.
+4. Ajoutez les secrets dans **Settings > Secrets and variables > Actions** :
    - `VITE_FIREBASE_API_KEY`
    - `VITE_FIREBASE_AUTH_DOMAIN`
    - `VITE_FIREBASE_PROJECT_ID`
    - `VITE_FIREBASE_STORAGE_BUCKET`
    - `VITE_FIREBASE_MESSAGING_SENDER_ID`
    - `VITE_FIREBASE_APP_ID`
-   - `VITE_FIREBASE_DATABASE_ID` (`ai-studio-fc7d5e1a-ce3e-4c8e-84ec-d119cb5294b3`)
-4. Chaque push sur `main` déclenche `.github/workflows/deploy.yml` (vérification TypeScript + build Vite + déploiement GitHub Pages).
+   - `VITE_FIREBASE_DATABASE_ID`
+5. Chaque push sur `main` déclenche `.github/workflows/deploy.yml` (vérification TypeScript + build Vite + déploiement GitHub Pages).
+

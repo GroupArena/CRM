@@ -10,7 +10,8 @@ import {
   type Prospect,
   type ProspectStatus,
 } from '../../types';
-import { validateProspectInput } from '../../utils/crmLogic';
+import { isValidHttpUrl } from '../../utils/billingLogic';
+import { normalizeOptionalHttpUrl, validateProspectInput } from '../../utils/crmLogic';
 
 interface ProspectFormModalProps {
   open: boolean;
@@ -150,6 +151,12 @@ export function ProspectFormModal({
       return;
     }
 
+    const normalizedWebsite = normalizeOptionalHttpUrl(website);
+    if (!isValidHttpUrl(normalizedWebsite)) {
+      setErrorMsg("L'URL du site web doit commencer par http:// ou https://.");
+      return;
+    }
+
     setSubmitting(true);
     setErrorMsg(null);
     try {
@@ -162,7 +169,7 @@ export function ProspectFormModal({
         email: email.trim(),
         phone: phone.trim(),
         mobile: mobile.trim(),
-        website: website.trim(),
+        website: normalizedWebsite,
         status,
         source: source.trim(),
         ownerUid: ownerUid || user?.uid || 'system',

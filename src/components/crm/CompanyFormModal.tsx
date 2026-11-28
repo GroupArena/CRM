@@ -3,7 +3,8 @@ import { AlertTriangle } from 'lucide-react';
 import { Modal } from '../ui/Modal';
 import { useCrm } from '../../context/CrmContext';
 import { LEGAL_STATUS_OPTIONS, type Company } from '../../types';
-import { findDuplicateCompanies } from '../../utils/billingLogic';
+import { findDuplicateCompanies, isValidHttpUrl } from '../../utils/billingLogic';
+import { normalizeOptionalHttpUrl } from '../../utils/crmLogic';
 
 interface CompanyFormModalProps {
   open: boolean;
@@ -95,6 +96,11 @@ export function CompanyFormModal({
       setErrorMsg('La raison sociale est obligatoire.');
       return;
     }
+    const normalizedWebsite = normalizeOptionalHttpUrl(website);
+    if (!isValidHttpUrl(normalizedWebsite)) {
+      setErrorMsg("L'URL du site web doit commencer par http:// ou https://.");
+      return;
+    }
     setSubmitting(true);
     setErrorMsg(null);
     try {
@@ -111,7 +117,7 @@ export function CompanyFormModal({
         phone: phone.trim(),
         whatsapp: whatsapp.trim(),
         email: email.trim(),
-        website: website.trim(),
+        website: normalizedWebsite,
         primaryContactId,
         tags: initialCompany?.tags ?? [],
         notes: notes.trim(),

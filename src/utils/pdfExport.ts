@@ -10,7 +10,7 @@ import type {
   Quote,
   QuoteItem,
 } from '../types';
-import { formatCurrency, formatDateFr } from './crmLogic';
+import { formatCurrency, formatDateFr, sanitizeSafeImageSrc } from './crmLogic';
 import {
   getBrandLogoPath,
   getEntityInvoiceTheme,
@@ -168,6 +168,14 @@ export async function registerArenaPdfFonts(doc: jsPDF): Promise<PdfFontPalette>
 
 async function loadImageAsDataUrl(src?: string): Promise<LoadedImageData | null> {
   if (!src || typeof window === 'undefined' || typeof Image === 'undefined') return null;
+  const trimmed = src.trim();
+  if (!trimmed) return null;
+  const isLocalBrandAsset =
+    /^(?:\.?\/|[a-zA-Z0-9_/-]+\/)?(?:assets\/aistudio|brands)\/[a-zA-Z0-9_.-]+$/i.test(
+      trimmed
+    );
+  const safeSrc = isLocalBrandAsset ? trimmed : sanitizeSafeImageSrc(trimmed);
+  if (!safeSrc) return null;
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -192,7 +200,7 @@ async function loadImageAsDataUrl(src?: string): Promise<LoadedImageData | null>
       }
     };
     img.onerror = () => resolve(null);
-    img.src = src;
+    img.src = safeSrc;
   });
 }
 
@@ -766,8 +774,8 @@ export async function buildArenaA4Pdf(
   doc.triangle(0, footerY, 134, footerY, 122, 297, 'F');
   doc.triangle(0, footerY, 0, 297, 122, 297, 'F');
 
-  const contactPhone = ctx.legal?.phone || '+261 38 02 410 05';
-  const contactEmail = ctx.legal?.email || 'contact@group-arena.com';
+  const contactPhone = ctx.legal?.phone || '—';
+  const contactEmail = ctx.legal?.email || '—';
 
   doc.setTextColor(255, 255, 255);
   doc.setFont(fonts.bodyFamily, fonts.bodyNormalStyle);

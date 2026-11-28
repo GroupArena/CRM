@@ -145,7 +145,6 @@ import {
   filterProspectsByScope,
   formatCurrency,
   getAuthorizedEntities,
-  isBootstrappedSuperAdminEmail,
   mergeDefaultRecordsById,
   PRODUCT_ACCESS_DENIED_MESSAGE,
   setActiveDefaultCurrency,
@@ -686,7 +685,6 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
 
   const verifyActiveUserOrSignOut = useCallback(
     async (uid: string, email: string) => {
-      if (isBootstrappedSuperAdminEmail(email)) return;
       try {
         await checkUserAccountAuthorized(uid, email);
       } catch (err) {
@@ -768,7 +766,11 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     const params = new URLSearchParams(
       window.location.search || window.location.hash.split('?')[1] || ''
     );
-    if (params.get('autostart') === '1') {
+    const isLocalOrDev =
+      Boolean(import.meta.env?.DEV) ||
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1';
+    if (isLocalOrDev && params.get('autostart') === '1') {
       enterDemoMode();
       return;
     }
@@ -865,10 +867,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
     const notifiedSubErrors = new Set<string>();
     const onSubError = (collectionName: string) => (error: unknown) => {
       console.error(`Erreur écoute Firestore (${collectionName}):`, error);
-      if (
-        !isBootstrappedSuperAdminEmail(currentUser.email) &&
-        isFirestorePermissionError(error)
-      ) {
+      if (isFirestorePermissionError(error)) {
         void verifyActiveUserOrSignOut(currentUser.uid, currentUser.email);
         return;
       }
@@ -913,10 +912,7 @@ export function CrmProvider({ children }: { children: React.ReactNode }) {
             return merged;
           });
           const selfRemote = normalized.find((u) => u.uid === currentUser.uid);
-          if (
-            !isBootstrappedSuperAdminEmail(currentUser.email) &&
-            (pendingUserWritesRef.current.get(currentUser.uid) ?? 0) === 0
-          ) {
+          if ((pendingUserWritesRef.current.get(currentUser.uid) ?? 0) === 0) {
             if (!selfRemote) {
               void verifyActiveUserOrSignOut(currentUser.uid, currentUser.email);
               return;

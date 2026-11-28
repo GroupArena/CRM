@@ -10,16 +10,42 @@ import type {
   UserProfile,
 } from '../types';
 
-export const BOOTSTRAPPED_SUPER_ADMIN_EMAILS = [
-  'navalona.rajaonarivelo@gmail.com',
-  'navalona@arenabusinesscenter.com',
-  'navalona@group-arena.com',
-] as const;
+export function sanitizeSafeHttpUrl(url?: string | null): string | undefined {
+  const trimmed = url?.trim();
+  if (!trimmed) return undefined;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
 
-export function isBootstrappedSuperAdminEmail(email?: string | null): boolean {
-  if (!email) return false;
-  const normalized = email.trim().toLowerCase();
-  return (BOOTSTRAPPED_SUPER_ADMIN_EMAILS as readonly string[]).includes(normalized);
+export function normalizeOptionalHttpUrl(url?: string | null): string {
+  const trimmed = url?.trim() ?? '';
+  if (!trimmed) return '';
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+    return sanitizeSafeHttpUrl(trimmed) ?? trimmed;
+  }
+  return `https://${trimmed}`;
+}
+
+const SAFE_RASTER_DATA_URL_RE =
+  /^data:image\/(png|jpeg|jpg|webp|gif);base64,[A-Za-z0-9+/=\s]+$/i;
+
+export function sanitizeSafeImageSrc(src?: string | null): string | undefined {
+  const trimmed = src?.trim();
+  if (!trimmed) return undefined;
+  if (SAFE_RASTER_DATA_URL_RE.test(trimmed)) {
+    return trimmed;
+  }
+  if (/^(?:\.?\/)?assets\/[a-zA-Z0-9_./-]+$/.test(trimmed)) {
+    return trimmed;
+  }
+  return sanitizeSafeHttpUrl(trimmed);
 }
 
 export type FirestoreConnectionStatus = 'checking' | 'connected' | 'offline';
@@ -39,13 +65,12 @@ export function shouldShowDemoModeOption(params: {
 export type UserAccessDeniedReason = 'deleted_or_unauthorized' | 'suspended';
 
 export interface ResolvedUserProfileResult {
-  needsCreate: boolean;
   needsUpdate: boolean;
   accessDeniedReason?: UserAccessDeniedReason;
   profile: UserProfile;
 }
 
-export function resolveBootstrappedUserProfile(
+export function resolveAuthorizedUserProfile(
   uid: string,
   email: string,
   displayName: string,
@@ -53,52 +78,37 @@ export function resolveBootstrappedUserProfile(
   allEntityIds: string[]
 ): ResolvedUserProfileResult {
   const cleanEmail = email.trim();
-  const isBootstrapped = isBootstrappedSuperAdminEmail(cleanEmail);
 
   if (!existingProfile) {
-    const fallbackProfile: UserProfile = {
-      uid,
-      email: cleanEmail,
-      displayName: displayName.trim() || cleanEmail.split('@')[0] || 'Utilisateur',
-      role: isBootstrapped ? 'super_admin' : 'reader',
-      entityIds: isBootstrapped ? [...allEntityIds] : [],
-      active: isBootstrapped,
-      createdAt: '',
-      updatedAt: '',
-    };
-
-    if (!isBootstrapped) {
-      return {
-        needsCreate: false,
-        needsUpdate: false,
-        accessDeniedReason: 'deleted_or_unauthorized',
-        profile: fallbackProfile,
-      };
-    }
-
     return {
-      needsCreate: true,
       needsUpdate: false,
-      profile: fallbackProfile,
+      accessDeniedReason: 'deleted_or_unauthorized',
+      profile: {
+        uid,
+        email: cleanEmail,
+        displayName: displayName.trim() || cleanEmail.split('@')[0] || 'Utilisateur',
+        role: 'reader',
+        entityIds: [],
+        active: false,
+        createdAt: '',
+        updatedAt: '',
+      },
     };
   }
 
-  if (!isBootstrapped && existingProfile.active === false) {
+  if (existingProfile.active === false) {
     return {
-      needsCreate: false,
       needsUpdate: false,
       accessDeniedReason: 'suspended',
       profile: existingProfile,
     };
   }
 
-  const shouldEnsureSuperAdminEntities =
-    isBootstrapped ||
-    (existingProfile.role === 'super_admin' && existingProfile.active);
+  const isActiveSuperAdmin =
+    existingProfile.role === 'super_admin' && existingProfile.active;
 
-  if (!shouldEnsureSuperAdminEntities) {
+  if (!isActiveSuperAdmin) {
     return {
-      needsCreate: false,
       needsUpdate: false,
       profile: existingProfile,
     };
@@ -108,15 +118,9 @@ export function resolveBootstrappedUserProfile(
     ? existingProfile.entityIds
     : [];
   const missingEntity = allEntityIds.some((id) => !existingEntities.includes(id));
-  const needsUpdate = isBootstrapped
-    ? existingProfile.role !== 'super_admin' ||
-      !existingProfile.active ||
-      missingEntity
-    : missingEntity;
 
-  if (!needsUpdate) {
+  if (!missingEntity) {
     return {
-      needsCreate: false,
       needsUpdate: false,
       profile: existingProfile,
     };
@@ -124,15 +128,12 @@ export function resolveBootstrappedUserProfile(
 
   const mergedEntities = Array.from(new Set([...allEntityIds, ...existingEntities]));
   return {
-    needsCreate: false,
     needsUpdate: true,
     profile: {
       ...existingProfile,
       uid: existingProfile.uid || uid,
       email: existingProfile.email || cleanEmail,
-      role: isBootstrapped ? 'super_admin' : existingProfile.role,
       entityIds: mergedEntities,
-      active: isBootstrapped ? true : existingProfile.active,
     },
   };
 }

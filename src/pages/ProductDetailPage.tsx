@@ -28,6 +28,8 @@ import {
   formatCurrency,
   formatDateFr,
   PRODUCT_ACCESS_DENIED_MESSAGE,
+  sanitizeSafeHttpUrl,
+  sanitizeSafeImageSrc,
 } from '../utils/crmLogic';
 import { ProductFormModal } from '../components/crm/ProductFormModal';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -138,9 +140,9 @@ export function ProductDetailPage() {
         </Link>
 
         <div className="flex flex-wrap items-center gap-2">
-          {product.productUrl && (
+          {sanitizeSafeHttpUrl(product.productUrl) && (
             <a
-              href={product.productUrl}
+              href={sanitizeSafeHttpUrl(product.productUrl)}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 text-xs font-medium text-[#19283E] hover:bg-slate-50"
@@ -225,9 +227,9 @@ export function ProductDetailPage() {
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
           <div className="flex items-start gap-4">
             <div className="h-16 w-16 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0">
-              {product.imageUrl?.trim() && !imgError ? (
+              {sanitizeSafeImageSrc(product.imageUrl) && !imgError ? (
                 <img
-                  src={product.imageUrl}
+                  src={sanitizeSafeImageSrc(product.imageUrl)}
                   alt={product.name}
                   referrerPolicy="no-referrer"
                   onError={() => setImgError(true)}
@@ -287,16 +289,16 @@ export function ProductDetailPage() {
             <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">
               {product.description || 'Aucune description renseignée pour ce produit ou service.'}
             </p>
-            {product.productUrl && (
+            {sanitizeSafeHttpUrl(product.productUrl) && (
               <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-4 text-xs">
                 <span className="text-slate-500">Lien fiche produit site web :</span>
                 <a
-                  href={product.productUrl}
+                  href={sanitizeSafeHttpUrl(product.productUrl)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1 font-medium text-blue-700 hover:underline truncate max-w-md"
                 >
-                  {product.productUrl}
+                  {sanitizeSafeHttpUrl(product.productUrl)}
                   <ExternalLink className="h-3.5 w-3.5 shrink-0" />
                 </a>
               </div>
@@ -464,9 +466,9 @@ export function ProductDetailPage() {
               Visuel du produit
             </h2>
             <div className="aspect-video w-full rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden">
-              {product.imageUrl?.trim() && !imgError ? (
+              {sanitizeSafeImageSrc(product.imageUrl) && !imgError ? (
                 <img
-                  src={product.imageUrl}
+                  src={sanitizeSafeImageSrc(product.imageUrl)}
                   alt={product.name}
                   referrerPolicy="no-referrer"
                   onError={() => setImgError(true)}

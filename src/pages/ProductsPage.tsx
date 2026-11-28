@@ -22,7 +22,12 @@ import {
   type ProductPricingType,
 } from '../types';
 import { computeProductMargin } from '../utils/billingLogic';
-import { formatCurrency, PRODUCT_ACCESS_DENIED_MESSAGE } from '../utils/crmLogic';
+import {
+  formatCurrency,
+  PRODUCT_ACCESS_DENIED_MESSAGE,
+  sanitizeSafeHttpUrl,
+  sanitizeSafeImageSrc,
+} from '../utils/crmLogic';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Modal } from '../components/ui/Modal';
 import { ProductFormModal } from '../components/crm/ProductFormModal';
@@ -291,7 +296,9 @@ export function ProductsPage() {
               <tbody className="divide-y divide-slate-100 text-sm">
                 {filteredProducts.map((p) => {
                   const margin = computeProductMargin(p.price, p.unitCost ?? 0);
-                  const showImg = Boolean(p.imageUrl?.trim()) && !brokenImages[p.id];
+                  const safeImageSrc = sanitizeSafeImageSrc(p.imageUrl);
+                  const safeProductUrl = sanitizeSafeHttpUrl(p.productUrl);
+                  const showImg = Boolean(safeImageSrc) && !brokenImages[p.id];
                   const entityLabel =
                     p.entityIds.length === 0
                       ? 'Toutes entités'
@@ -303,9 +310,9 @@ export function ProductsPage() {
                       <td className="py-3 px-3.5">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0">
-                            {showImg ? (
+                            {showImg && safeImageSrc ? (
                               <img
-                                src={p.imageUrl}
+                                src={safeImageSrc}
                                 alt={p.name}
                                 referrerPolicy="no-referrer"
                                 onError={() =>
@@ -337,11 +344,11 @@ export function ProductsPage() {
                               </span>
                               <span>·</span>
                               <span>{p.category}</span>
-                              {p.productUrl && (
+                              {safeProductUrl && (
                                 <>
                                   <span>·</span>
                                   <a
-                                    href={p.productUrl}
+                                    href={safeProductUrl}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center gap-0.5 text-blue-700 hover:underline"

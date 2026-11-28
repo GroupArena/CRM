@@ -16,11 +16,13 @@ import {
   filterProspectsByScope,
   formatCurrency,
   getAuthorizedEntities,
-  isBootstrappedSuperAdminEmail,
   mergeDefaultRecordsById,
+  normalizeOptionalHttpUrl,
   normalizeProductForWrite,
-  resolveBootstrappedUserProfile,
+  resolveAuthorizedUserProfile,
   resolveEffectiveActionStatus,
+  sanitizeSafeHttpUrl,
+  sanitizeSafeImageSrc,
   sanitizeUserProfileForWrite,
   setActiveDefaultCurrency,
   shouldShowDemoModeOption,
@@ -264,91 +266,65 @@ test('Currency formatting supports MGA (Ar) as default out of the box', () => {
   setActiveDefaultCurrency('MGA');
 });
 
-test('Bootstrapped Super Admin detection and existing reader profile promotion', () => {
-  assert.equal(isBootstrappedSuperAdminEmail('navalona@arenabusinesscenter.com'), true);
-  assert.equal(isBootstrappedSuperAdminEmail('navalona@group-arena.com'), true);
-  assert.equal(isBootstrappedSuperAdminEmail('  Navalona.Rajaonarivelo@gmail.com '), true);
-  assert.equal(isBootstrappedSuperAdminEmail('collaborateur@arenabusinesscenter.com'), false);
-  assert.equal(isBootstrappedSuperAdminEmail(null), false);
-
+test('Authorized user resolution enforces Firestore profile without hardcoded admin emails', () => {
   const entityIds = ['arena-business-center', 'improveo', 'arena-studio-comm', 'maison-artisanat'];
 
-  const freshAdmin = resolveBootstrappedUserProfile(
-    'uid-1',
-    'navalona@arenabusinesscenter.com',
-    'Navalona',
-    null,
-    entityIds
-  );
-  assert.equal(freshAdmin.needsCreate, true);
-  assert.equal(freshAdmin.needsUpdate, false);
-  assert.equal(freshAdmin.profile.role, 'super_admin');
-  assert.deepEqual(freshAdmin.profile.entityIds, entityIds);
-
-  const deletedOrUnauthorizedUser = resolveBootstrappedUserProfile(
+  const deletedOrUnauthorizedUser = resolveAuthorizedUserProfile(
     'uid-2',
-    'sales@arenabusinesscenter.com',
-    '',
+    'user@example.test',
+    'Test User',
     null,
     entityIds
   );
-  assert.equal(deletedOrUnauthorizedUser.needsCreate, false);
   assert.equal(deletedOrUnauthorizedUser.needsUpdate, false);
   assert.equal(deletedOrUnauthorizedUser.accessDeniedReason, 'deleted_or_unauthorized');
 
-  const suspendedUser = resolveBootstrappedUserProfile(
+  const suspendedUser = resolveAuthorizedUserProfile(
     'uid-2b',
-    'sales@arenabusinesscenter.com',
+    'sales@example.test',
     'Commercial',
-    { ...SALES_IMPROVEO, uid: 'uid-2b', email: 'sales@arenabusinesscenter.com', active: false },
+    { ...SALES_IMPROVEO, uid: 'uid-2b', email: 'sales@example.test', active: false },
     entityIds
   );
-  assert.equal(suspendedUser.needsCreate, false);
   assert.equal(suspendedUser.needsUpdate, false);
   assert.equal(suspendedUser.accessDeniedReason, 'suspended');
 
-  const staleReaderAdmin: UserProfile = {
-    uid: 'uid-1',
-    email: 'navalona@arenabusinesscenter.com',
-    displayName: 'Navalona',
-    role: 'reader',
-    entityIds: [],
-    active: false,
-    createdAt: '2026-11-20T00:00:00Z',
-    updatedAt: '2026-11-20T00:00:00Z',
-  };
-  const promoted = resolveBootstrappedUserProfile(
-    'uid-1',
-    'navalona@arenabusinesscenter.com',
-    'Navalona',
-    staleReaderAdmin,
-    entityIds
-  );
-  assert.equal(promoted.needsCreate, false);
-  assert.equal(promoted.needsUpdate, true);
-  assert.equal(promoted.profile.role, 'super_admin');
-  assert.equal(promoted.profile.active, true);
-  assert.deepEqual(promoted.profile.entityIds, entityIds);
-
-  const alreadyAdmin = resolveBootstrappedUserProfile(
-    'uid-1',
-    'navalona@arenabusinesscenter.com',
-    'Navalona',
-    promoted.profile,
-    entityIds
-  );
-  assert.equal(alreadyAdmin.needsCreate, false);
-  assert.equal(alreadyAdmin.needsUpdate, false);
-
-  const nonAdminExisting = resolveBootstrappedUserProfile(
+  const nonAdminExisting = resolveAuthorizedUserProfile(
     'uid-3',
-    'user@improveo.fr',
-    'User',
-    { ...READER_USER, uid: 'uid-3', email: 'user@improveo.fr' },
+    'reader@example.test',
+    'Reader',
+    { ...READER_USER, uid: 'uid-3', email: 'reader@example.test' },
     entityIds
   );
   assert.equal(nonAdminExisting.needsUpdate, false);
   assert.equal(nonAdminExisting.profile.role, 'reader');
+
+  const adminMissingEntities = resolveAuthorizedUserProfile(
+    'uid-admin',
+    'admin@example.test',
+    'Admin',
+    { ...SUPER_ADMIN, uid: 'uid-admin', entityIds: ['improveo'] },
+    entityIds
+  );
+  assert.equal(adminMissingEntities.needsUpdate, true);
+  assert.deepEqual(adminMissingEntities.profile.entityIds.sort(), [...entityIds].sort());
+});
+
+test('URL and image sanitization blocks javascript:, data:text/html, and SVG data URIs', () => {
+  assert.equal(sanitizeSafeHttpUrl('https://example.com/fiche'), 'https://example.com/fiche');
+  assert.equal(sanitizeSafeHttpUrl('http://localhost:3000/test'), 'http://localhost:3000/test');
+  assert.equal(sanitizeSafeHttpUrl('javascript:alert(1)'), undefined);
+  assert.equal(sanitizeSafeHttpUrl('data:text/html,<script>alert(1)</script>'), undefined);
+  assert.equal(normalizeOptionalHttpUrl('example.com'), 'https://example.com');
+  assert.equal(normalizeOptionalHttpUrl('javascript:alert(1)'), 'javascript:alert(1)');
+
+  assert.equal(
+    sanitizeSafeImageSrc('data:image/png;base64,iVBORw0KGgo='),
+    'data:image/png;base64,iVBORw0KGgo='
+  );
+  assert.equal(sanitizeSafeImageSrc('data:image/svg+xml;base64,PHN2Zz4='), undefined);
+  assert.equal(sanitizeSafeImageSrc('javascript:alert(1)'), undefined);
+  assert.equal(sanitizeSafeImageSrc('https://cdn.example.com/logo.png'), 'https://cdn.example.com/logo.png');
 });
 
 test('Settings, entity/user/tag management and user deletion are restricted to active Super Admins', () => {
@@ -399,7 +375,7 @@ test('Active super_admin with missing entityIds is synced automatically', () => 
   const entityIds = ['arena-business-center', 'improveo', 'arena-studio-comm', 'maison-artisanat'];
   const promotedUser: UserProfile = {
     uid: 'uid-promoted',
-    email: 'direction@arena.mg',
+    email: 'direction@example.test',
     displayName: 'Direction',
     role: 'super_admin',
     entityIds: [],
@@ -407,9 +383,9 @@ test('Active super_admin with missing entityIds is synced automatically', () => 
     createdAt: '2026-11-20T00:00:00Z',
     updatedAt: '2026-11-20T00:00:00Z',
   };
-  const synced = resolveBootstrappedUserProfile(
+  const synced = resolveAuthorizedUserProfile(
     'uid-promoted',
-    'direction@arena.mg',
+    'direction@example.test',
     'Direction',
     promotedUser,
     entityIds

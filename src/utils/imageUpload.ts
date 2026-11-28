@@ -2,12 +2,11 @@ const ALLOWED_IMAGE_TYPES = new Set([
   'image/png',
   'image/jpeg',
   'image/webp',
-  'image/svg+xml',
 ]);
 
 export async function processSignatureOrStampFile(file: File): Promise<string> {
   if (!ALLOWED_IMAGE_TYPES.has(file.type)) {
-    throw new Error('Format non supporté. Utilisez un fichier PNG, JPG, WebP ou SVG.');
+    throw new Error('Format non supporté. Utilisez un fichier PNG, JPG ou WebP.');
   }
   if (file.size > 5 * 1024 * 1024) {
     throw new Error('Le fichier image dépasse la limite de 5 Mo.');

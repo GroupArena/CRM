@@ -12,7 +12,7 @@ import {
   parseFormattedDescriptionLines,
   shouldRenderStampAndSignature,
 } from '../../utils/billingLogic';
-import { formatCurrency, formatDateFr } from '../../utils/crmLogic';
+import { formatCurrency, formatDateFr, sanitizeSafeImageSrc } from '../../utils/crmLogic';
 import { formatInvoiceAmountInWords } from '../../utils/numberToWordsFr';
 
 // A4 standard dimensions at 96 DPI (210mm x 297mm)
@@ -471,21 +471,22 @@ export function A4DocumentSheet({
 
                 {shouldRenderStampAndSignature(kind) && (
                   <div className="col-span-5 flex flex-col items-end justify-end min-h-[164px] relative">
-                    {legal?.stampImageUrl || legal?.signatureImageUrl ? (
+                    {sanitizeSafeImageSrc(legal?.stampImageUrl) ||
+                    sanitizeSafeImageSrc(legal?.signatureImageUrl) ? (
                       <div className="relative flex flex-col items-center justify-center w-64 min-h-[156px]">
-                        {legal.stampImageUrl && (
+                        {sanitizeSafeImageSrc(legal?.stampImageUrl) && (
                           <img
-                            src={legal.stampImageUrl}
+                            src={sanitizeSafeImageSrc(legal?.stampImageUrl)}
                             alt={`Tampon ${entity?.name ?? 'entité'}`}
                             className="max-h-40 max-w-[230px] w-auto object-contain opacity-90"
                           />
                         )}
-                        {legal.signatureImageUrl && (
+                        {sanitizeSafeImageSrc(legal?.signatureImageUrl) && (
                           <img
-                            src={legal.signatureImageUrl}
+                            src={sanitizeSafeImageSrc(legal?.signatureImageUrl)}
                             alt={`Signature ${entity?.name ?? 'entité'}`}
                             className={`max-h-20 max-w-[200px] w-auto object-contain ${
-                              legal.stampImageUrl ? '-mt-12 relative z-10' : ''
+                              sanitizeSafeImageSrc(legal?.stampImageUrl) ? '-mt-12 relative z-10' : ''
                             }`}
                           />
                         )}
@@ -520,11 +521,11 @@ export function A4DocumentSheet({
               <div className="relative z-10 flex flex-wrap items-center gap-6">
                 <span className="inline-flex items-center gap-1.5 font-sans tabular-nums">
                   <Phone className="h-3.5 w-3.5 text-[#C9A125]" />
-                  {legal?.phone || '+261 38 02 410 05'}
+                  {legal?.phone || '—'}
                 </span>
                 <span className="inline-flex items-center gap-1.5">
                   <Mail className="h-3.5 w-3.5 text-[#C9A125]" />
-                  {legal?.email || 'contact@group-arena.com'}
+                  {legal?.email || '—'}
                 </span>
               </div>
             </div>

@@ -21,7 +21,11 @@ import {
   isSkuUnique,
   validateProductInput,
 } from '../../utils/billingLogic';
-import { formatCurrency, PRODUCT_ACCESS_DENIED_MESSAGE } from '../../utils/crmLogic';
+import {
+  formatCurrency,
+  PRODUCT_ACCESS_DENIED_MESSAGE,
+  sanitizeSafeImageSrc,
+} from '../../utils/crmLogic';
 import { CatalogSelectWithAdd } from './CatalogSelectWithAdd';
 
 interface ProductFormModalProps {
@@ -762,9 +766,9 @@ export function ProductFormModal({ open, onClose, initialProduct }: ProductFormM
           <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
             <div className="sm:col-span-2 flex justify-center">
               <div className="h-16 w-16 rounded-lg border border-slate-200 bg-white flex items-center justify-center overflow-hidden">
-                {imageUrl.trim() && !imagePreviewError ? (
+                {sanitizeSafeImageSrc(imageUrl) && !imagePreviewError ? (
                   <img
-                    src={imageUrl.trim()}
+                    src={sanitizeSafeImageSrc(imageUrl)}
                     alt="Aperçu produit"
                     referrerPolicy="no-referrer"
                     onError={() => setImagePreviewError(true)}

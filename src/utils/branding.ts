@@ -178,7 +178,15 @@ export function resolveCustomEntityLogoUrl(
     return undefined;
   }
 
-  return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export type RgbTuple = [number, number, number];
@@ -269,3 +277,4 @@ export function getEntityInvoiceTheme(
     softTintRgb: hexToRgb(softTintHex),
   };
 }
+

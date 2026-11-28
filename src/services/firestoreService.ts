@@ -71,9 +71,8 @@ import {
 } from './seedData';
 import { formatDocumentNumber } from '../utils/billingLogic';
 import {
-  isBootstrappedSuperAdminEmail,
   normalizeProductForWrite,
-  resolveBootstrappedUserProfile,
+  resolveAuthorizedUserProfile,
   sanitizeUserProfileForWrite,
 } from '../utils/crmLogic';
 
@@ -121,10 +120,9 @@ async function fetchUserDocFromServer(uid: string) {
 
 export async function checkUserAccountAuthorized(
   uid: string,
-  email: string
+  _email: string
 ): Promise<void> {
   if (!db) throw new Error('Firestore non initialisé.');
-  if (isBootstrappedSuperAdminEmail(email)) return;
   try {
     const snap = await fetchUserDocFromServer(uid);
     if (!snap.exists()) {
@@ -167,7 +165,7 @@ export async function ensureUserProfile(
     const existing = snap.exists()
       ? normalizeDoc<UserProfile>(snap.id, snap.data())
       : null;
-    const resolved = resolveBootstrappedUserProfile(
+    const resolved = resolveAuthorizedUserProfile(
       uid,
       email,
       displayName,
@@ -189,28 +187,10 @@ export async function ensureUserProfile(
       );
     }
 
-    if (resolved.needsCreate) {
-      const profilePayload = {
-        uid: resolved.profile.uid,
-        email: resolved.profile.email,
-        displayName: resolved.profile.displayName,
-        role: resolved.profile.role,
-        entityIds: resolved.profile.entityIds,
-        active: resolved.profile.active,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      };
-      await setDoc(userRef, profilePayload);
-      const createdSnap = await getDocFromServer(userRef);
-      return normalizeDoc<UserProfile>(createdSnap.id, createdSnap.data() ?? {});
-    }
-
     if (resolved.needsUpdate) {
       try {
         await updateDoc(userRef, {
-          role: resolved.profile.role,
           entityIds: resolved.profile.entityIds,
-          active: resolved.profile.active,
           updatedAt: serverTimestamp(),
         });
         const updatedSnap = await getDocFromServer(userRef);
